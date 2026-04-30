@@ -95,7 +95,7 @@ export default function Results() {
       if (key) calibMap.set(key, row);
     }
 
-    let data: any[] = results.map(r => {
+    let data: any[] = results.map((r, _originalIndex) => {
       const key = r.compound.name.toLowerCase();
       const lit = calibMap.get(key);
       let litPct: number | null = null;
@@ -131,7 +131,13 @@ export default function Results() {
         adjRank = Math.max(0, Math.min(100, adjRank));
       }
 
-      return { ...r, _litPct: litPct, _adjRank: adjRank, _calibNote: note };
+      return {
+        ...r,
+        _originalIndex,
+        _litPct: litPct,
+        _adjRank: adjRank,
+        _calibNote: note,
+      };
     });
     if (filter.trim()) {
       const q = filter.toLowerCase();
@@ -521,7 +527,7 @@ export default function Results() {
                 </TableHeader>
                 <TableBody>
                   {filteredAndSorted.map((r, i) => {
-                    const originalIndex = results.indexOf(r);
+                    const originalIndex = (r as any)._originalIndex ?? results.indexOf(r);
                     const isFailed = r.compound.status !== "success";
                     const isSelected = selectedNames.has(r.compound.name);
                     return (
