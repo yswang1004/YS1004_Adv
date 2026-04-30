@@ -4,8 +4,6 @@ import type {
   CYP2E1Screening,
   ScreeningResult,
   PotentialLevel,
-  ScreeningConfidence,
-  ConfidenceLevel,
 } from "../shared/types";
 
 // ─── PubChem API ───────────────────────────────────────────────────────────────
@@ -363,175 +361,13 @@ export function screenCYP2E1(compound: CompoundProperties): CYP2E1Screening {
   };
 }
 
-// ─── Confidence + Ranking (reduce false positives) ─────────────────────────────
-
-function toConfidenceLevel(score: number): ConfidenceLevel {
-  if (score >= 75) return "High";
-  if (score >= 50) return "Medium";
-  return "Low";
-}
-
-function clamp01(x: number) {
-  return Math.max(0, Math.min(1, x));
-}
-
-function computeBBBConfidence(
-  compound: CompoundProperties,
-  bbb: BBBScreening
-): { score: number; level: ConfidenceLevel; reasons: string[]; flags: string[] } {
-  const reasons: string[] = [];
-  const flags: string[] = [];
-
-  // Missing critical inputs → low confidence
-  const missing: string[] = [];
-  if (compound.mw == null) missing.push("MW");
-  if (compound.logP == null) missing.push("LogP");
-  if (compound.tpsa == null) missing.push("TPSA");
-  if (compound.hbd == null) missing.push("HBD");
-  if (compound.hba == null) missing.push("HBA");
-  if (missing.length) reasons.push(`Missing inputs: ${missing.join(", ")}`);
-
-  // Applicability domain: heuristic BBB rules are mostly trained/validated within these
-  let adPenalty = 0;
-  if (compound.mw != null && (compound.mw < 80 || compound.mw > 600)) {
-    adPenalty += 0.25;
-    reasons.push("Outside typical MW domain (80–600)");
-  }
-  if (compound.tpsa != null && (compound.tpsa < 0 || compound.tpsa > 160)) {
-    adPenalty += 0.25;
-    reasons.push("Outside typical TPSA domain (0–160)");
-  }
-  if (compound.logP != null && (compound.logP < -1 || compound.logP > 7)) {
-    adPenalty += 0.25;
-    reasons.push("Outside typical LogP domain (-1–7)");
-  }
-
-  // Agreement between simple rules (consensus): disagreement → lower confidence
-  const agree = Number(bbb.boiledEgg) + Number(bbb.admetlab);
-  if (agree === 2) reasons.push("BOILED-Egg agrees with ADMETlab rules");
-  if (agree === 0) {
-    reasons.push("BOILED-Egg disagrees with ADMETlab rules (both negative)");
-  }
-
-  // Kp,uu,brain computed or not (proxy model)
-  if (bbb.kpuuBrain == null) reasons.push("Kp,uu,brain proxy unavailable");
-
-  // Flag chemotypes often mis-handled by logP/TPSA-only rules
-  const smiles = compound.smiles ?? "";
-  if (smiles) {
-    // thiols/dithiocarbamates/strong chelators can exist as salts/complexes → BBB prediction unreliable
-    if (/S(=S)|NCS|C\(=S\)S|C\(S\)\(S\)|S\[/.test(smiles)) {
-      flags.push("Reactive/thiocarbonyl motif (possible metal-complex / conjugation)");
-      reasons.push("Sulfur-rich motif may break BBB proxy assumptions");
-      adPenalty += 0.15;
-    }
-  }
-
-  // Score composition
-  const completeness = 1 - missing.length / 5; // 0..1
-  const consensus = agree / 2; // 0..1
-  const kpuuBonus = bbb.kpuuBrain != null ? 1 : 0.6;
-
-  const raw = 100 * (0.45 * completeness + 0.35 * consensus + 0.2 * kpuuBonus);
-  const score = Math.round(raw * (1 - clamp01(adPenalty)));
-  const level = toConfidenceLevel(score);
-
-  return { score, level, reasons, flags };
-}
-
-function computeCYP2E1Confidence(
-  compound: CompoundProperties,
-  cyp2e1: CYP2E1Screening
-): { score: number; level: ConfidenceLevel; reasons: string[]; flags: string[] } {
-  const reasons: string[] = [];
-  const flags: string[] = [];
-
-  if (!compound.smiles) {
-    reasons.push("Missing SMILES; CYP2E1 rule-based screening may be unreliable");
-    return { score: 30, level: "Low", reasons, flags };
-  }
-
-  // This CYP2E1 model is heuristic (structure rules, not IC50). Default to medium, then adjust.
-  reasons.push("CYP2E1 screening is rule-based (not a measured IC50)");
-
-  // More matched features generally increases robustness
-  const featureCount = cyp2e1.features.length;
-  const hasHeme = cyp2e1.features.some(f => f.toLowerCase().includes("heme"));
-
-  let score = 55;
-  if (featureCount >= 3) score += 10;
-  if (hasHeme) score += 10;
-  if (compound.mw == null || compound.logP == null) {
-    score -= 10;
-    reasons.push("Missing MW/LogP reduces rule evaluation confidence");
-  }
-
-  // Flag: sulfur heme ligation can also mean high reactivity / off-targets
-  if (cyp2e1.features.some(f => f.toLowerCase().includes("sulfur"))) {
-    flags.push("Sulfur heme-ligation motif (watch for reactivity/off-target)");
-  }
-
-  score = Math.max(0, Math.min(100, score));
-  const level = toConfidenceLevel(score);
-  return { score, level, reasons, flags };
-}
-
-export function computeConfidenceAndRank(
-  compound: CompoundProperties,
-  bbb: BBBScreening,
-  cyp2e1: CYP2E1Screening,
-  options?: { weightBBB?: number; weightCYP?: number }
-): { confidence: ScreeningConfidence; rankScore: number } {
-  const wBBB = options?.weightBBB ?? 0.6;
-  const wCYP = options?.weightCYP ?? 0.4;
-
-  const b = computeBBBConfidence(compound, bbb);
-  const c = computeCYP2E1Confidence(compound, cyp2e1);
-
-  const flags = Array.from(new Set([...b.flags, ...c.flags]));
-
-  // Convert categorical potentials to numeric 0..1
-  const potTo01 = (p: PotentialLevel) =>
-    p === "Very High" ? 1 : p === "High" ? 0.75 : p === "Moderate" ? 0.45 : 0.2;
-
-  const bbbStrength = potTo01(bbb.bbbPotential);
-  const cypStrength = potTo01(cyp2e1.potential);
-
-  // Main score favors high potential but penalizes low confidence (reduce false positives)
-  const strengthScore = 100 * (wBBB * bbbStrength + wCYP * cypStrength);
-  const confidencePenalty = 0.35 * (100 - Math.min(b.score, c.score));
-  const rankScore = Math.round(Math.max(0, Math.min(100, strengthScore - confidencePenalty)));
-
-  const overallScore = Math.round((b.score + c.score) / 2);
-  const overallLevel = toConfidenceLevel(overallScore);
-  const overallReasons = [
-    `BBB confidence: ${b.level} (${b.score}/100)`,
-    `CYP2E1 confidence: ${c.level} (${c.score}/100)`,
-  ];
-
-  return {
-    confidence: {
-      bbb: { score: b.score, level: b.level, reasons: b.reasons },
-      cyp2e1: { score: c.score, level: c.level, reasons: c.reasons },
-      overall: { score: overallScore, level: overallLevel, reasons: overallReasons },
-      flags,
-    },
-    rankScore,
-  };
-}
-
 // ─── Full Screening Pipeline ───────────────────────────────────────────────────
 
 export async function screenCompound(name: string): Promise<ScreeningResult> {
   const compound = await fetchCompoundFromPubChem(name);
   const bbb = screenBBB(compound);
   const cyp2e1 = screenCYP2E1(compound);
-  const { confidence, rankScore } = computeConfidenceAndRank(
-    compound,
-    bbb,
-    cyp2e1
-  );
-  return { compound, bbb, cyp2e1, confidence, rankScore };
+  return { compound, bbb, cyp2e1 };
 }
 
 export async function screenCompounds(

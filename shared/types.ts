@@ -9,24 +9,6 @@ export * from "./_core/errors";
 /** Potential level for BBB and CYP2E1 screening */
 export type PotentialLevel = "Very High" | "High" | "Moderate" | "Low";
 
-/** Confidence level for model trustworthiness */
-export type ConfidenceLevel = "High" | "Medium" | "Low";
-
-export interface ConfidenceBlock {
-  /** 0-100 */
-  score: number;
-  level: ConfidenceLevel;
-  reasons: string[];
-}
-
-export interface ScreeningConfidence {
-  bbb: ConfidenceBlock;
-  cyp2e1: ConfidenceBlock;
-  overall: ConfidenceBlock;
-  /** Risk flags that often drive false positives (e.g., reactive/chelator) */
-  flags: string[];
-}
-
 /** Raw physicochemical properties from PubChem */
 export interface CompoundProperties {
   name: string;
@@ -79,8 +61,4 @@ export interface ScreeningResult {
   compound: CompoundProperties;
   bbb: BBBScreening;
   cyp2e1: CYP2E1Screening;
-  /** Model confidence report (helps reduce false positives) */
-  confidence?: ScreeningConfidence;
-  /** Overall ranking score (0-100) for prioritization */
-  rankScore?: number;
 }
