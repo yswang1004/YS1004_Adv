@@ -1,0 +1,25 @@
+# Compound Screener TODO
+
+- [x] Design elegant dark theme with professional scientific aesthetic (index.css, fonts)
+- [x] Backend: PubChem API integration (fetch SMILES, MW, LogP, TPSA, HBD, HBA by compound name)
+- [x] Backend: BBB screening logic (SwissADME BOILED-Egg: TPSA<79, 0.4<LogP<6.0; ADMETlab 3.0: MW<450, LogP<5, TPSA<90, HBD<3, HBA<7)
+- [x] Backend: LogPS and Kp,uu,brain estimation calculations
+- [x] Backend: CYP2E1 inhibition scoring (molecular volume, S/N-heterocycle heme ligation, aromatic pi-pi stacking, H-bond potential)
+- [x] Backend: tRPC procedure for batch compound screening
+- [x] Database: screening_results table to store history
+- [x] Frontend: Landing page with elegant hero section and tool description
+- [x] Frontend: Compound input form (single or batch, one per line)
+- [x] Frontend: Results table with all columns, sortable by every field
+- [x] Frontend: Color-coded potential levels (Very High, High, Moderate, Low)
+- [x] Frontend: CSV export functionality
+- [x] Frontend: Compound detail page with structural features and screening rationale
+- [x] Frontend: Loading states and error handling
+- [x] Write vitest tests for screening logic
+- [x] Frontend: History page to view and reload past screening sessions
+- [x] Navbar: History link and Results link visibility logic
+- [x] Bug fix: compounds query returns no data regardless of input (PubChem HTTP 503 from server-side; moved to client-side CORS fetch)
+- [x] Results page: checkbox selection for multiple compounds
+- [x] Radar chart comparison component (recharts RadarChart)
+- [x] Compare panel/dialog showing radar chart with selected compounds overlay
+- [x] Normalized scoring for radar chart axes (MW, LogP, TPSA, LogPS, Kp,uu, CYP Score)
+- [x] Color-coded compound lines in radar chart with legend
