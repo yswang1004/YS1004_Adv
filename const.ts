@@ -1,29 +1,65 @@
-export function injectUmamiAnalytics() {
-  // Build-safe analytics injection:
-  // - Avoid leaving %VITE_...% placeholders in index.html
-  // - Only inject when envs are configured
-  const endpoint = import.meta.env.VITE_ANALYTICS_ENDPOINT as
-    | string
-    | undefined;
-  const websiteId = import.meta.env.VITE_ANALYTICS_WEBSITE_ID as
-    | string
-    | undefined;
+import { describe, expect, it } from "vitest";
+import { appRouter } from "./routers";
+import { COOKIE_NAME } from "../shared/const";
+import type { TrpcContext } from "./_core/context";
 
-  if (!endpoint || !websiteId) return;
-  if (typeof document === "undefined") return;
+type CookieCall = {
+  name: string;
+  options: Record<string, unknown>;
+};
 
-  const normalized = endpoint.replace(/\/+$/, "");
-  const src = `${normalized}/umami`;
+type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-  // Prevent double-injection
-  const existing = document.querySelector(
-    `script[data-website-id="${websiteId}"]`
-  );
-  if (existing) return;
+function createAuthContext(): {
+  ctx: TrpcContext;
+  clearedCookies: CookieCall[];
+} {
+  const clearedCookies: CookieCall[] = [];
 
-  const s = document.createElement("script");
-  s.defer = true;
-  s.src = src;
-  s.setAttribute("data-website-id", websiteId);
-  document.head.appendChild(s);
+  const user: AuthenticatedUser = {
+    id: 1,
+    openId: "sample-user",
+    email: "sample@example.com",
+    name: "Sample User",
+    loginMethod: "manus",
+    role: "user",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastSignedIn: new Date(),
+  };
+
+  const ctx: TrpcContext = {
+    user,
+    req: {
+      protocol: "https",
+      headers: {},
+    } as TrpcContext["req"],
+    res: {
+      clearCookie: (name: string, options: Record<string, unknown>) => {
+        clearedCookies.push({ name, options });
+      },
+    } as TrpcContext["res"],
+  };
+
+  return { ctx, clearedCookies };
 }
+
+describe("auth.logout", () => {
+  it("clears the session cookie and reports success", async () => {
+    const { ctx, clearedCookies } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.auth.logout();
+
+    expect(result).toEqual({ success: true });
+    expect(clearedCookies).toHaveLength(1);
+    expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
+    expect(clearedCookies[0]?.options).toMatchObject({
+      maxAge: -1,
+      secure: true,
+      sameSite: "none",
+      httpOnly: true,
+      path: "/",
+    });
+  });
+});

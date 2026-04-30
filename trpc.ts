@@ -1,264 +1,337 @@
-import { useMemo } from "react";
-import {
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
-  Legend,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import type { ScreeningResult } from "../../../shared/types";
+import { ENV } from "./env";
 
-/**
- * Distinct color palette for up to 10 compounds.
- * Uses vivid, well-separated hues for clear visual distinction.
- */
-const COMPOUND_COLORS = [
-  "#22d3ee", // cyan
-  "#f472b6", // pink
-  "#a78bfa", // violet
-  "#34d399", // emerald
-  "#fb923c", // orange
-  "#60a5fa", // blue
-  "#facc15", // yellow
-  "#f87171", // red
-  "#2dd4bf", // teal
-  "#c084fc", // purple
-];
+export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
-/** Axes for the radar chart with their normalization ranges */
-const RADAR_AXES = [
-  { key: "mw", label: "MW", min: 0, max: 600, invert: true },
-  { key: "logP", label: "LogP", min: -3, max: 8, invert: false },
-  { key: "tpsa", label: "TPSA", min: 0, max: 200, invert: true },
-  { key: "logPS", label: "LogPS", min: -4, max: 0, invert: false },
-  { key: "kpuu", label: "Kp,uu", min: 0, max: 1, invert: false },
-  { key: "cypScore", label: "CYP Score", min: 0, max: 16, invert: false },
-] as const;
+export type TextContent = {
+  type: "text";
+  text: string;
+};
 
-/**
- * Normalize a value to 0-100 scale.
- * For "inverted" axes (like MW, TPSA), lower values are better → higher score.
- */
-function normalize(
-  value: number | null | undefined,
-  min: number,
-  max: number,
-  invert: boolean
-): number {
-  if (value == null) return 0;
-  const clamped = Math.max(min, Math.min(max, value));
-  const ratio = (clamped - min) / (max - min);
-  return Math.round((invert ? 1 - ratio : ratio) * 100);
-}
+export type ImageContent = {
+  type: "image_url";
+  image_url: {
+    url: string;
+    detail?: "auto" | "low" | "high";
+  };
+};
 
-interface RadarCompareProps {
-  selected: ScreeningResult[];
-  onClose: () => void;
-  onRemove: (name: string) => void;
-}
+export type FileContent = {
+  type: "file_url";
+  file_url: {
+    url: string;
+    mime_type?:
+      | "audio/mpeg"
+      | "audio/wav"
+      | "application/pdf"
+      | "audio/mp4"
+      | "video/mp4";
+  };
+};
 
-export function RadarCompare({
-  selected,
-  onClose,
-  onRemove,
-}: RadarCompareProps) {
-  /** Build radar data: one entry per axis, with a key per compound */
-  const radarData = useMemo(() => {
-    return RADAR_AXES.map(axis => {
-      const entry: Record<string, string | number> = { axis: axis.label };
-      selected.forEach(r => {
-        let raw: number | null | undefined;
-        switch (axis.key) {
-          case "mw":
-            raw = r.compound.mw;
-            break;
-          case "logP":
-            raw = r.compound.logP;
-            break;
-          case "tpsa":
-            raw = r.compound.tpsa;
-            break;
-          case "logPS":
-            raw = r.bbb.logPS;
-            break;
-          case "kpuu":
-            raw = r.bbb.kpuuBrain;
-            break;
-          case "cypScore":
-            raw = r.cyp2e1.score;
-            break;
-        }
-        entry[r.compound.name] = normalize(
-          raw,
-          axis.min,
-          axis.max,
-          axis.invert
-        );
-      });
-      return entry;
-    });
-  }, [selected]);
+export type MessageContent = string | TextContent | ImageContent | FileContent;
 
-  /** Build raw values for tooltip */
-  const rawValues = useMemo(() => {
-    const map: Record<string, Record<string, string>> = {};
-    selected.forEach(r => {
-      const vals: Record<string, string> = {};
-      vals["MW"] =
-        r.compound.mw != null ? Number(r.compound.mw).toFixed(1) : "—";
-      vals["LogP"] =
-        r.compound.logP != null ? Number(r.compound.logP).toFixed(1) : "—";
-      vals["TPSA"] =
-        r.compound.tpsa != null ? Number(r.compound.tpsa).toFixed(1) : "—";
-      vals["LogPS"] =
-        r.bbb.logPS != null ? Number(r.bbb.logPS).toFixed(2) : "—";
-      vals["Kp,uu"] =
-        r.bbb.kpuuBrain != null
-          ? Number(r.bbb.kpuuBrain) < 0.001
-            ? Number(r.bbb.kpuuBrain).toExponential(2)
-            : Number(r.bbb.kpuuBrain).toFixed(4)
-          : "—";
-      vals["CYP Score"] = String(r.cyp2e1.score);
-      map[r.compound.name] = vals;
-    });
-    return map;
-  }, [selected]);
+export type Message = {
+  role: Role;
+  content: MessageContent | MessageContent[];
+  name?: string;
+  tool_call_id?: string;
+};
 
-  return (
-    <div className="card-glow bg-card border border-border rounded-xl overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-        <div>
-          <h3 className="text-lg font-semibold text-foreground">
-            Radar Comparison
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Normalized scores (0–100). Higher is better for drug-likeness.
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onClose}
-          className="h-8 w-8 p-0"
-        >
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
+export type Tool = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
 
-      {/* Chart */}
-      <div className="px-4 pt-2 pb-2">
-        <div
-          className="w-full"
-          style={{ height: Math.max(380, selected.length * 20 + 340) }}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <RadarChart data={radarData} cx="50%" cy="48%" outerRadius="70%">
-              <PolarGrid stroke="oklch(0.28 0.015 260)" strokeDasharray="3 3" />
-              <PolarAngleAxis
-                dataKey="axis"
-                tick={{
-                  fill: "oklch(0.72 0.015 260)",
-                  fontSize: 12,
-                  fontWeight: 500,
-                }}
-              />
-              <PolarRadiusAxis
-                angle={30}
-                domain={[0, 100]}
-                tick={{ fill: "oklch(0.5 0.01 260)", fontSize: 10 }}
-                tickCount={5}
-                axisLine={false}
-              />
-              {selected.map((r, i) => (
-                <Radar
-                  key={r.compound.name}
-                  name={r.compound.name}
-                  dataKey={r.compound.name}
-                  stroke={COMPOUND_COLORS[i % COMPOUND_COLORS.length]}
-                  fill={COMPOUND_COLORS[i % COMPOUND_COLORS.length]}
-                  fillOpacity={0.08}
-                  strokeWidth={2}
-                  dot={{
-                    r: 3,
-                    fill: COMPOUND_COLORS[i % COMPOUND_COLORS.length],
-                    fillOpacity: 0.9,
-                  }}
-                />
-              ))}
-              <Tooltip
-                content={({ payload, label }) => {
-                  if (!payload || payload.length === 0) return null;
-                  return (
-                    <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-xs">
-                      <div className="font-semibold text-foreground mb-1.5">
-                        {label}
-                      </div>
-                      {payload.map((p: any, idx: number) => {
-                        const compoundName = p.name;
-                        const actualVal =
-                          rawValues[compoundName]?.[label as string] ?? "—";
-                        return (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-2 py-0.5"
-                          >
-                            <div
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: p.stroke }}
-                            />
-                            <span className="text-muted-foreground">
-                              {compoundName}:
-                            </span>
-                            <span className="font-mono text-foreground font-medium ml-auto">
-                              {actualVal}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-                formatter={(value: string) => (
-                  <span className="text-muted-foreground">{value}</span>
-                )}
-              />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+export type ToolChoicePrimitive = "none" | "auto" | "required";
+export type ToolChoiceByName = { name: string };
+export type ToolChoiceExplicit = {
+  type: "function";
+  function: {
+    name: string;
+  };
+};
 
-      {/* Selected compounds chips */}
-      <div className="px-5 pb-4 flex flex-wrap gap-2">
-        {selected.map((r, i) => (
-          <span
-            key={r.compound.name}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border"
-            style={{
-              borderColor: COMPOUND_COLORS[i % COMPOUND_COLORS.length] + "60",
-              backgroundColor:
-                COMPOUND_COLORS[i % COMPOUND_COLORS.length] + "15",
-              color: COMPOUND_COLORS[i % COMPOUND_COLORS.length],
-            }}
-          >
-            {r.compound.name}
-            <button
-              onClick={() => onRemove(r.compound.name)}
-              className="ml-0.5 hover:opacity-70 transition-opacity"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ))}
-      </div>
-    </div>
+export type ToolChoice =
+  | ToolChoicePrimitive
+  | ToolChoiceByName
+  | ToolChoiceExplicit;
+
+export type InvokeParams = {
+  messages: Message[];
+  tools?: Tool[];
+  toolChoice?: ToolChoice;
+  tool_choice?: ToolChoice;
+  maxTokens?: number;
+  max_tokens?: number;
+  outputSchema?: OutputSchema;
+  output_schema?: OutputSchema;
+  responseFormat?: ResponseFormat;
+  response_format?: ResponseFormat;
+};
+
+export type ToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+export type InvokeResult = {
+  id: string;
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: {
+      role: Role;
+      content: string | Array<TextContent | ImageContent | FileContent>;
+      tool_calls?: ToolCall[];
+    };
+    finish_reason: string | null;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+};
+
+export type JsonSchema = {
+  name: string;
+  schema: Record<string, unknown>;
+  strict?: boolean;
+};
+
+export type OutputSchema = JsonSchema;
+
+export type ResponseFormat =
+  | { type: "text" }
+  | { type: "json_object" }
+  | { type: "json_schema"; json_schema: JsonSchema };
+
+const ensureArray = (
+  value: MessageContent | MessageContent[]
+): MessageContent[] => (Array.isArray(value) ? value : [value]);
+
+const normalizeContentPart = (
+  part: MessageContent
+): TextContent | ImageContent | FileContent => {
+  if (typeof part === "string") {
+    return { type: "text", text: part };
+  }
+
+  if (part.type === "text") {
+    return part;
+  }
+
+  if (part.type === "image_url") {
+    return part;
+  }
+
+  if (part.type === "file_url") {
+    return part;
+  }
+
+  throw new Error("Unsupported message content part");
+};
+
+const normalizeMessage = (message: Message) => {
+  const { role, name, tool_call_id } = message;
+
+  if (role === "tool" || role === "function") {
+    const content = ensureArray(message.content)
+      .map(part => (typeof part === "string" ? part : JSON.stringify(part)))
+      .join("\n");
+
+    return {
+      role,
+      name,
+      tool_call_id,
+      content,
+    };
+  }
+
+  const contentParts = ensureArray(message.content).map(normalizeContentPart);
+
+  // If there's only text content, collapse to a single string for compatibility
+  if (contentParts.length === 1 && contentParts[0].type === "text") {
+    return {
+      role,
+      name,
+      content: contentParts[0].text,
+    };
+  }
+
+  return {
+    role,
+    name,
+    content: contentParts,
+  };
+};
+
+const normalizeToolChoice = (
+  toolChoice: ToolChoice | undefined,
+  tools: Tool[] | undefined
+): "none" | "auto" | ToolChoiceExplicit | undefined => {
+  if (!toolChoice) return undefined;
+
+  if (toolChoice === "none" || toolChoice === "auto") {
+    return toolChoice;
+  }
+
+  if (toolChoice === "required") {
+    if (!tools || tools.length === 0) {
+      throw new Error(
+        "tool_choice 'required' was provided but no tools were configured"
+      );
+    }
+
+    if (tools.length > 1) {
+      throw new Error(
+        "tool_choice 'required' needs a single tool or specify the tool name explicitly"
+      );
+    }
+
+    return {
+      type: "function",
+      function: { name: tools[0].function.name },
+    };
+  }
+
+  if ("name" in toolChoice) {
+    return {
+      type: "function",
+      function: { name: toolChoice.name },
+    };
+  }
+
+  return toolChoice;
+};
+
+const resolveApiUrl = () =>
+  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
+    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
+    : "https://forge.manus.im/v1/chat/completions";
+
+const assertApiKey = () => {
+  if (!ENV.forgeApiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+};
+
+const normalizeResponseFormat = ({
+  responseFormat,
+  response_format,
+  outputSchema,
+  output_schema,
+}: {
+  responseFormat?: ResponseFormat;
+  response_format?: ResponseFormat;
+  outputSchema?: OutputSchema;
+  output_schema?: OutputSchema;
+}):
+  | { type: "json_schema"; json_schema: JsonSchema }
+  | { type: "text" }
+  | { type: "json_object" }
+  | undefined => {
+  const explicitFormat = responseFormat || response_format;
+  if (explicitFormat) {
+    if (
+      explicitFormat.type === "json_schema" &&
+      !explicitFormat.json_schema?.schema
+    ) {
+      throw new Error(
+        "responseFormat json_schema requires a defined schema object"
+      );
+    }
+    return explicitFormat;
+  }
+
+  const schema = outputSchema || output_schema;
+  if (!schema) return undefined;
+
+  if (!schema.name || !schema.schema) {
+    throw new Error("outputSchema requires both name and schema");
+  }
+
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: schema.name,
+      schema: schema.schema,
+      ...(typeof schema.strict === "boolean" ? { strict: schema.strict } : {}),
+    },
+  };
+};
+
+export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
+  assertApiKey();
+
+  const {
+    messages,
+    tools,
+    toolChoice,
+    tool_choice,
+    outputSchema,
+    output_schema,
+    responseFormat,
+    response_format,
+  } = params;
+
+  const payload: Record<string, unknown> = {
+    model: "gemini-2.5-flash",
+    messages: messages.map(normalizeMessage),
+  };
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+  }
+
+  const normalizedToolChoice = normalizeToolChoice(
+    toolChoice || tool_choice,
+    tools
   );
+  if (normalizedToolChoice) {
+    payload.tool_choice = normalizedToolChoice;
+  }
+
+  payload.max_tokens = 32768;
+  payload.thinking = {
+    budget_tokens: 128,
+  };
+
+  const normalizedResponseFormat = normalizeResponseFormat({
+    responseFormat,
+    response_format,
+    outputSchema,
+    output_schema,
+  });
+
+  if (normalizedResponseFormat) {
+    payload.response_format = normalizedResponseFormat;
+  }
+
+  const response = await fetch(resolveApiUrl(), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${ENV.forgeApiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
+    );
+  }
+
+  return (await response.json()) as InvokeResult;
 }
