@@ -10,7 +10,6 @@ const Results = lazy(() => import("./pages/Results"));
 const CompoundDetail = lazy(() => import("./pages/CompoundDetail"));
 const History = lazy(() => import("./pages/History"));
 const NotFound = lazy(() => import("./pages/NotFound"));
-const Calibration = lazy(() => import("./pages/Calibration"));
 
 function Router() {
   return (
@@ -26,7 +25,6 @@ function Router() {
         <Route path="/results" component={Results} />
         <Route path="/compound/:index" component={CompoundDetail} />
         <Route path="/history" component={History} />
-        <Route path="/calibration" component={Calibration} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

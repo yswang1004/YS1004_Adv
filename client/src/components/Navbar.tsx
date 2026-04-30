@@ -26,18 +26,11 @@ export function Navbar() {
             Screener
           </NavLink>
           {(location.startsWith("/results") ||
-            location.startsWith("/compound") ||
-            location.startsWith("/calibration")) && (
+            location.startsWith("/compound")) && (
             <NavLink href="/results" active={location.startsWith("/results")}>
               Results
             </NavLink>
           )}
-          <NavLink
-            href="/calibration"
-            active={location.startsWith("/calibration")}
-          >
-            Calibration
-          </NavLink>
           <NavLink href="/history" active={location === "/history"}>
             History
           </NavLink>

@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { Navbar } from "@/components/Navbar";
 import { LevelBadge } from "@/components/LevelBadge";
-import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import { RadarCompare } from "@/components/RadarCompare";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -29,8 +28,6 @@ import {
 import type { ScreeningResult } from "../../../shared/types";
 
 type SortField =
-  | "rankScore"
-  | "confidence"
   | "name"
   | "mw"
   | "logP"
@@ -51,14 +48,7 @@ const potentialOrder = { "Very High": 4, High: 3, Moderate: 2, Low: 1 };
 
 export default function Results() {
   const [results, setResults] = useState<ScreeningResult[]>([]);
-  const [calibration] = useState<any[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("bbbCalibration") ?? "[]");
-    } catch {
-      return [];
-    }
-  });
-  const [sortField, setSortField] = useState<SortField>("rankScore");
+  const [sortField, setSortField] = useState<SortField>("bbbPotential");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [filter, setFilter] = useState("");
   const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
@@ -88,57 +78,7 @@ export default function Results() {
   };
 
   const filteredAndSorted = useMemo(() => {
-    // Apply literature calibration (if provided)
-    const calibMap = new Map<string, any>();
-    for (const row of calibration ?? []) {
-      const key = String(row.compound_name ?? "").trim().toLowerCase();
-      if (key) calibMap.set(key, row);
-    }
-
-    let data: any[] = results.map((r, _originalIndex) => {
-      const key = r.compound.name.toLowerCase();
-      const lit = calibMap.get(key);
-      let litPct: number | null = null;
-      let adjRank = r.rankScore ?? null;
-      let note = "";
-
-      if (lit && typeof lit.bbb_metric === "number") {
-        litPct = lit.bbb_metric;
-        // 3-bin label for %ID in brain
-        const label = litPct < 0.1 ? "Low" : litPct <= 0.3 ? "Medium" : "High";
-        const pred = r.bbb.bbbPotential;
-
-        // Penalize clear overestimation to reduce false positives
-        if ((pred === "Very High" || pred === "High") && label === "Low") {
-          adjRank = (adjRank ?? 0) - 20;
-          note = "Overestimated vs literature";
-        } else if (pred === "Very High" && label === "Medium") {
-          adjRank = (adjRank ?? 0) - 10;
-          note = "Slight overestimation";
-        } else if (pred === "Low" && label === "High") {
-          adjRank = (adjRank ?? 0) + 10;
-          note = "Underestimated vs literature";
-        }
-      }
-
-      // Extra penalty when confidence is low (generic false-positive control)
-      if (r.confidence?.overall?.score != null && adjRank != null) {
-        const conf = r.confidence.overall.score / 100;
-        adjRank = Math.round(adjRank - 15 * (1 - conf));
-      }
-
-      if (adjRank != null) {
-        adjRank = Math.max(0, Math.min(100, adjRank));
-      }
-
-      return {
-        ...r,
-        _originalIndex,
-        _litPct: litPct,
-        _adjRank: adjRank,
-        _calibNote: note,
-      };
-    });
+    let data = [...results];
     if (filter.trim()) {
       const q = filter.toLowerCase();
       data = data.filter(r => r.compound.name.toLowerCase().includes(q));
@@ -146,14 +86,6 @@ export default function Results() {
     data.sort((a, b) => {
       let valA: any, valB: any;
       switch (sortField) {
-        case "rankScore":
-          valA = a._adjRank ?? a.rankScore ?? -Infinity;
-          valB = b._adjRank ?? b.rankScore ?? -Infinity;
-          break;
-        case "confidence":
-          valA = a.confidence?.overall.score ?? -Infinity;
-          valB = b.confidence?.overall.score ?? -Infinity;
-          break;
         case "name":
           valA = a.compound.name.toLowerCase();
           valB = b.compound.name.toLowerCase();
@@ -258,13 +190,6 @@ export default function Results() {
 
   const exportCSV = () => {
     const headers = [
-      "RankScore",
-      "AdjustedRankScore",
-      "Literature_%ID_in_brain",
-      "CalibrationNote",
-      "ConfidenceLevel",
-      "ConfidenceScore",
-      "ConfidenceFlags",
       "Compound",
       "SMILES",
       "MW",
@@ -282,13 +207,6 @@ export default function Results() {
       "CYP2E1 Features",
     ];
     const rows = filteredAndSorted.map(r => [
-      r.rankScore ?? "",
-      (r as any)._adjRank ?? "",
-      (r as any)._litPct ?? "",
-      (r as any)._calibNote ?? "",
-      r.confidence?.overall.level ?? "",
-      r.confidence?.overall.score ?? "",
-      r.confidence?.flags.join("; ") ?? "",
       r.compound.name,
       r.compound.smiles ?? "",
       r.compound.mw ?? "",
@@ -499,8 +417,6 @@ export default function Results() {
                         aria-label="Select all"
                       />
                     </TableHead>
-                    <SortableHeader field="rankScore">Rank</SortableHeader>
-                    <SortableHeader field="confidence">Conf.</SortableHeader>
                     <SortableHeader field="name">Compound</SortableHeader>
                     <SortableHeader field="mw">MW</SortableHeader>
                     <SortableHeader field="logP">LogP</SortableHeader>
@@ -527,7 +443,7 @@ export default function Results() {
                 </TableHeader>
                 <TableBody>
                   {filteredAndSorted.map((r, i) => {
-                    const originalIndex = (r as any)._originalIndex ?? results.indexOf(r);
+                    const originalIndex = results.indexOf(r);
                     const isFailed = r.compound.status !== "success";
                     const isSelected = selectedNames.has(r.compound.name);
                     return (
@@ -549,26 +465,6 @@ export default function Results() {
                             }
                             aria-label={`Select ${r.compound.name}`}
                           />
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">
-                          {r._adjRank != null ? r._adjRank : r.rankScore != null ? r.rankScore : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {r.confidence ? (
-                            <div className="flex flex-col gap-1">
-                              <ConfidenceBadge level={r.confidence.overall.level} />
-                              {r.confidence.flags.length > 0 && (
-                                <span
-                                  className="text-[10px] text-muted-foreground"
-                                  title={r.confidence.flags.join("; ")}
-                                >
-                                  flags: {r.confidence.flags.length}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
                         </TableCell>
                         <TableCell className="font-medium text-foreground whitespace-nowrap">
                           {r.compound.name}
