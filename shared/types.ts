@@ -29,7 +29,12 @@ export interface CompoundProperties {
   tpsa: number | null;
   hbd: number | null;
   hba: number | null;
-  status: "success" | "not_found" | "error";
+  status:
+    | "success"
+    | "not_found"
+    | "name_unresolved"
+    | "not_single_compound"
+    | "error";
   errorMessage?: string;
 }
 

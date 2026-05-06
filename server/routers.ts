@@ -27,7 +27,13 @@ const compoundDataSchema = z.object({
   tpsa: z.number().nullable(),
   hbd: z.number().nullable(),
   hba: z.number().nullable(),
-  status: z.enum(["success", "not_found", "error"]),
+  status: z.enum([
+    "success",
+    "not_found",
+    "name_unresolved",
+    "not_single_compound",
+    "error",
+  ]),
   errorMessage: z.string().optional(),
 });
 

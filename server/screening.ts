@@ -38,6 +38,138 @@ const MEASURED_ISOFORM_ALIASES: Record<string, MeasuredSupportedIsoform> = {
   '3A4/3A5': "CYP3A4",
 };
 
+const NAME_NORMALIZATION_MAP: Record<string, string> = {
+  "β-myrcene": "beta-Myrcene",
+  "α-myrcene": "alpha-Myrcene",
+  "butylated hydroxyl anisole": "Butylated hydroxyanisole",
+  neohesperidine: "Neohesperidin",
+  chlormethiazole: "Clomethiazole",
+};
+
+const NON_SINGLE_COMPOUND_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  {
+    pattern: /^brij\s*\d+/i,
+    reason:
+      "Brij series are commercial surfactant mixtures rather than single well-defined small molecules.",
+  },
+  {
+    pattern: /^tween\s*\d+/i,
+    reason:
+      "Tween series are polysorbate surfactant mixtures rather than single discrete compounds.",
+  },
+  {
+    pattern: /microcrystalline\s+cellulose/i,
+    reason:
+      "Microcrystalline cellulose is an excipient/material, not a single small molecule suitable for one-CID screening.",
+  },
+];
+
+function normalizeCandidateNames(name: string): string[] {
+  const trimmed = name.trim();
+  const variants = new Set<string>([trimmed]);
+  const lower = trimmed.toLowerCase();
+  if (NAME_NORMALIZATION_MAP[lower]) variants.add(NAME_NORMALIZATION_MAP[lower]);
+  variants.add(
+    trimmed
+      .replace(/[βΒ]/g, "beta")
+      .replace(/[αΑ]/g, "alpha")
+      .replace(/\s+/g, " ")
+  );
+  variants.add(trimmed.replace(/-/g, " "));
+  return Array.from(variants).map(v => v.trim()).filter(Boolean);
+}
+
+function classifyNonSingleCompound(name: string): string | null {
+  for (const entry of NON_SINGLE_COMPOUND_PATTERNS) {
+    if (entry.pattern.test(name)) return entry.reason;
+  }
+  return null;
+}
+
+async function lookupPubChemByName(
+  originalName: string,
+  queryName: string
+): Promise<CompoundProperties> {
+  const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(queryName)}/cids/JSON`;
+  const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(15000) });
+  if (!cidRes.ok) {
+    return {
+      name: originalName,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: cidRes.status === 404 ? "not_found" : "error",
+      errorMessage: `PubChem lookup failed for ${queryName} (HTTP ${cidRes.status})`,
+    };
+  }
+
+  const cidData = await cidRes.json();
+  const cid = cidData?.IdentifierList?.CID?.[0];
+  if (!cid) {
+    return {
+      name: originalName,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "not_found",
+      errorMessage: `No CID found in PubChem for ${queryName}`,
+    };
+  }
+
+  const propUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
+  const propRes = await fetch(propUrl, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!propRes.ok) {
+    return {
+      name: originalName,
+      cid,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "error",
+      errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
+    };
+  }
+  const propData = await propRes.json();
+  const props: PubChemProperty = propData?.PropertyTable?.Properties?.[0] ?? {};
+
+  return {
+    name: originalName,
+    cid,
+    smiles:
+      props.IsomericSMILES ??
+      props.CanonicalSMILES ??
+      props.SMILES ??
+      props.ConnectivitySMILES ??
+      null,
+    mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
+    logP: props.XLogP != null ? Number(props.XLogP) : null,
+    tpsa: props.TPSA != null ? Number(props.TPSA) : null,
+    hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
+    hba:
+      props.HBondAcceptorCount != null
+        ? Number(props.HBondAcceptorCount)
+        : null,
+    status: "success",
+    errorMessage:
+      queryName !== originalName
+        ? `Resolved via normalized name: ${queryName}`
+        : undefined,
+  };
+}
+
 export async function fetchCompoundFromPubChem(
   name: string
 ): Promise<CompoundProperties> {
@@ -57,80 +189,48 @@ export async function fetchCompoundFromPubChem(
     };
   }
 
-  try {
-    const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(trimmed)}/cids/JSON`;
-    const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(15000) });
-    if (!cidRes.ok) {
-      return {
-        name: trimmed,
-        cid: null,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        status: "not_found",
-        errorMessage: `PubChem lookup failed (HTTP ${cidRes.status})`,
-      };
-    }
-    const cidData = await cidRes.json();
-    const cid = cidData?.IdentifierList?.CID?.[0];
-    if (!cid) {
-      return {
-        name: trimmed,
-        cid: null,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        status: "not_found",
-        errorMessage: "No CID found in PubChem",
-      };
-    }
+  const nonSingleReason = classifyNonSingleCompound(trimmed);
+  if (nonSingleReason) {
+    return {
+      name: trimmed,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "not_single_compound",
+      errorMessage: nonSingleReason,
+    };
+  }
 
-    const propUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
-    const propRes = await fetch(propUrl, {
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!propRes.ok) {
-      return {
-        name: trimmed,
-        cid,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        status: "error",
-        errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
-      };
+  try {
+    const candidates = normalizeCandidateNames(trimmed);
+    let sawNotFound = false;
+    for (const candidate of candidates) {
+      const result = await lookupPubChemByName(trimmed, candidate);
+      if (result.status === "success") return result;
+      if (result.status === "not_found") {
+        sawNotFound = true;
+        continue;
+      }
+      return result;
     }
-    const propData = await propRes.json();
-    const props: PubChemProperty =
-      propData?.PropertyTable?.Properties?.[0] ?? {};
 
     return {
       name: trimmed,
-      cid,
-      smiles:
-        props.IsomericSMILES ??
-        props.CanonicalSMILES ??
-        props.SMILES ??
-        props.ConnectivitySMILES ??
-        null,
-      mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
-      logP: props.XLogP != null ? Number(props.XLogP) : null,
-      tpsa: props.TPSA != null ? Number(props.TPSA) : null,
-      hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
-      hba:
-        props.HBondAcceptorCount != null
-          ? Number(props.HBondAcceptorCount)
-          : null,
-      status: "success",
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "name_unresolved",
+      errorMessage: sawNotFound
+        ? "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name."
+        : "Unable to resolve compound name.",
     };
   } catch (err: any) {
     return {

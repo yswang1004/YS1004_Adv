@@ -1,0 +1,1 @@
+import{j as l}from"./index-nb-EP07U.js";const t={"Very High":"level-very-high",High:"level-high",Moderate:"level-moderate",Low:"level-low"};function n({level:e}){return l.jsx("span",{"data-loc":"client/src/components/LevelBadge.tsx:12",className:`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide ${t[e]}`,children:e})}export{n as L};
