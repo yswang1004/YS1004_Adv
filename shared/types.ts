@@ -4,21 +4,6 @@ export * from "./_core/errors";
 /** Potential level for BBB and CYP inhibition screening */
 export type PotentialLevel = "Very High" | "High" | "Moderate" | "Low";
 
-export type CYPIsoform =
-  | "CYP1A2"
-  | "CYP2C9"
-  | "CYP2C19"
-  | "CYP2D6"
-  | "CYP2E1"
-  | "CYP3A4"
-  | "CYP3A5";
-
-export type MeasuredSupportedIsoform =
-  | "CYP1A2"
-  | "CYP2D6"
-  | "CYP3A4"
-  | "CYP3A5";
-
 /** Raw physicochemical properties from PubChem */
 export interface CompoundProperties {
   name: string;
@@ -29,12 +14,7 @@ export interface CompoundProperties {
   tpsa: number | null;
   hbd: number | null;
   hba: number | null;
-  status:
-    | "success"
-    | "not_found"
-    | "name_unresolved"
-    | "not_single_compound"
-    | "error";
+  status: "success" | "not_found" | "error";
   errorMessage?: string;
 }
 
@@ -48,18 +28,9 @@ export interface BBBScreening {
   bbbPotential: PotentialLevel;
 }
 
-export interface MeasuredCYPRecord {
-  compoundName: string;
-  isoform: MeasuredSupportedIsoform;
-  value: number;
-  unit: string;
-  relation?: string | null;
-  note?: string | null;
-}
-
 /** CYP inhibition result for a single isoform */
 export interface CYPInhibitionScreening {
-  isoform: CYPIsoform;
+  isoform: "CYP1A2" | "CYP2C9" | "CYP2C19" | "CYP2D6" | "CYP2E1" | "CYP3A4";
   score: number;
   potential: PotentialLevel;
   features: string[];
@@ -68,7 +39,6 @@ export interface CYPInhibitionScreening {
   measuredValue?: number | null;
   measuredUnit?: string | null;
   measuredRelation?: string | null;
-  measuredNote?: string | null;
   details?: Record<string, { score: number; description: string }>;
 }
 
@@ -91,7 +61,6 @@ export interface CYP450Panel {
   cyp2d6: CYPInhibitionScreening;
   cyp2e1: CYP2E1Screening;
   cyp3a4: CYPInhibitionScreening;
-  cyp3a5: CYPInhibitionScreening;
   majorFamilyScore: number;
   overallPotential: PotentialLevel;
   topIsoforms: string[];

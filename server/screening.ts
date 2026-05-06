@@ -6,8 +6,6 @@ import type {
   CYP450Panel,
   ScreeningResult,
   PotentialLevel,
-  MeasuredCYPRecord,
-  MeasuredSupportedIsoform,
 } from "../shared/types";
 
 interface PubChemProperty {
@@ -21,156 +19,6 @@ interface PubChemProperty {
   TPSA?: number;
   HBondDonorCount?: number;
   HBondAcceptorCount?: number;
-}
-
-const MEASURED_ISOFORM_ALIASES: Record<string, MeasuredSupportedIsoform> = {
-  CYP1A2: "CYP1A2",
-  '1A2': "CYP1A2",
-  CYP2D6: "CYP2D6",
-  '2D6': "CYP2D6",
-  CYP3A4: "CYP3A4",
-  '3A4': "CYP3A4",
-  CYP3A5: "CYP3A5",
-  '3A5': "CYP3A5",
-  'CYP3A4/5': "CYP3A4",
-  'CYP3A4/3A5': "CYP3A4",
-  '3A4/5': "CYP3A4",
-  '3A4/3A5': "CYP3A4",
-};
-
-const NAME_NORMALIZATION_MAP: Record<string, string> = {
-  "β-myrcene": "beta-Myrcene",
-  "α-myrcene": "alpha-Myrcene",
-  "butylated hydroxyl anisole": "Butylated hydroxyanisole",
-  neohesperidine: "Neohesperidin",
-  chlormethiazole: "Clomethiazole",
-};
-
-const NON_SINGLE_COMPOUND_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
-  {
-    pattern: /^brij\s*\d+/i,
-    reason:
-      "Brij series are commercial surfactant mixtures rather than single well-defined small molecules.",
-  },
-  {
-    pattern: /^tween\s*\d+/i,
-    reason:
-      "Tween series are polysorbate surfactant mixtures rather than single discrete compounds.",
-  },
-  {
-    pattern: /microcrystalline\s+cellulose/i,
-    reason:
-      "Microcrystalline cellulose is an excipient/material, not a single small molecule suitable for one-CID screening.",
-  },
-];
-
-function normalizeCandidateNames(name: string): string[] {
-  const trimmed = name.trim();
-  const variants = new Set<string>();
-  const lower = trimmed.toLowerCase();
-  if (NAME_NORMALIZATION_MAP[lower]) variants.add(NAME_NORMALIZATION_MAP[lower]);
-
-  const greekNormalized = trimmed
-    .replace(/[βΒ]/g, "beta")
-    .replace(/[αΑ]/g, "alpha")
-    .replace(/\s+/g, " ");
-  if (greekNormalized !== trimmed) variants.add(greekNormalized);
-
-  const dehyphenated = trimmed.replace(/-/g, " ");
-  if (dehyphenated !== trimmed) variants.add(dehyphenated);
-
-  return Array.from(variants).map(v => v.trim()).filter(Boolean);
-}
-
-function classifyNonSingleCompound(name: string): string | null {
-  for (const entry of NON_SINGLE_COMPOUND_PATTERNS) {
-    if (entry.pattern.test(name)) return entry.reason;
-  }
-  return null;
-}
-
-async function lookupPubChemByName(
-  originalName: string,
-  queryName: string
-): Promise<CompoundProperties> {
-  const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(queryName)}/cids/JSON`;
-  const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(20000) });
-  if (!cidRes.ok) {
-    return {
-      name: originalName,
-      cid: null,
-      smiles: null,
-      mw: null,
-      logP: null,
-      tpsa: null,
-      hbd: null,
-      hba: null,
-      status: cidRes.status === 404 ? "not_found" : "error",
-      errorMessage: `PubChem lookup failed for ${queryName} (HTTP ${cidRes.status})`,
-    };
-  }
-
-  const cidData = await cidRes.json();
-  const cid = cidData?.IdentifierList?.CID?.[0];
-  if (!cid) {
-    return {
-      name: originalName,
-      cid: null,
-      smiles: null,
-      mw: null,
-      logP: null,
-      tpsa: null,
-      hbd: null,
-      hba: null,
-      status: "not_found",
-      errorMessage: `No CID found in PubChem for ${queryName}`,
-    };
-  }
-
-  const propUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
-  const propRes = await fetch(propUrl, {
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!propRes.ok) {
-    return {
-      name: originalName,
-      cid,
-      smiles: null,
-      mw: null,
-      logP: null,
-      tpsa: null,
-      hbd: null,
-      hba: null,
-      status: "error",
-      errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
-    };
-  }
-  const propData = await propRes.json();
-  const props: PubChemProperty = propData?.PropertyTable?.Properties?.[0] ?? {};
-
-  return {
-    name: originalName,
-    cid,
-    smiles:
-      props.IsomericSMILES ??
-      props.CanonicalSMILES ??
-      props.SMILES ??
-      props.ConnectivitySMILES ??
-      null,
-    mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
-    logP: props.XLogP != null ? Number(props.XLogP) : null,
-    tpsa: props.TPSA != null ? Number(props.TPSA) : null,
-    hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
-    hba:
-      props.HBondAcceptorCount != null
-        ? Number(props.HBondAcceptorCount)
-        : null,
-    status: "success",
-    errorMessage:
-      queryName !== originalName
-        ? `Resolved via normalized name: ${queryName}`
-        : undefined,
-  };
 }
 
 export async function fetchCompoundFromPubChem(
@@ -192,46 +40,80 @@ export async function fetchCompoundFromPubChem(
     };
   }
 
-  const nonSingleReason = classifyNonSingleCompound(trimmed);
-  if (nonSingleReason) {
-    return {
-      name: trimmed,
-      cid: null,
-      smiles: null,
-      mw: null,
-      logP: null,
-      tpsa: null,
-      hbd: null,
-      hba: null,
-      status: "not_single_compound",
-      errorMessage: nonSingleReason,
-    };
-  }
-
   try {
-    const primaryResult = await lookupPubChemByName(trimmed, trimmed);
-    if (primaryResult.status === "success") return primaryResult;
-    if (primaryResult.status === "error") return primaryResult;
-
-    const candidates = normalizeCandidateNames(trimmed);
-    for (const candidate of candidates) {
-      const result = await lookupPubChemByName(trimmed, candidate);
-      if (result.status === "success") return result;
-      if (result.status === "error") return result;
+    const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(trimmed)}/cids/JSON`;
+    const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(15000) });
+    if (!cidRes.ok) {
+      return {
+        name: trimmed,
+        cid: null,
+        smiles: null,
+        mw: null,
+        logP: null,
+        tpsa: null,
+        hbd: null,
+        hba: null,
+        status: "not_found",
+        errorMessage: `PubChem lookup failed (HTTP ${cidRes.status})`,
+      };
+    }
+    const cidData = await cidRes.json();
+    const cid = cidData?.IdentifierList?.CID?.[0];
+    if (!cid) {
+      return {
+        name: trimmed,
+        cid: null,
+        smiles: null,
+        mw: null,
+        logP: null,
+        tpsa: null,
+        hbd: null,
+        hba: null,
+        status: "not_found",
+        errorMessage: "No CID found in PubChem",
+      };
     }
 
+    const propUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
+    const propRes = await fetch(propUrl, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!propRes.ok) {
+      return {
+        name: trimmed,
+        cid,
+        smiles: null,
+        mw: null,
+        logP: null,
+        tpsa: null,
+        hbd: null,
+        hba: null,
+        status: "error",
+        errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
+      };
+    }
+    const propData = await propRes.json();
+    const props: PubChemProperty =
+      propData?.PropertyTable?.Properties?.[0] ?? {};
+
     return {
       name: trimmed,
-      cid: null,
-      smiles: null,
-      mw: null,
-      logP: null,
-      tpsa: null,
-      hbd: null,
-      hba: null,
-      status: "name_unresolved",
-      errorMessage:
-        "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name.",
+      cid,
+      smiles:
+        props.IsomericSMILES ??
+        props.CanonicalSMILES ??
+        props.SMILES ??
+        props.ConnectivitySMILES ??
+        null,
+      mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
+      logP: props.XLogP != null ? Number(props.XLogP) : null,
+      tpsa: props.TPSA != null ? Number(props.TPSA) : null,
+      hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
+      hba:
+        props.HBondAcceptorCount != null
+          ? Number(props.HBondAcceptorCount)
+          : null,
+      status: "success",
     };
   } catch (err: any) {
     return {
@@ -353,19 +235,6 @@ function scoreToPotential(score: number): PotentialLevel {
   return "Low";
 }
 
-function potentialToRepresentativeScore(potential: PotentialLevel): number {
-  switch (potential) {
-    case "Very High":
-      return 12;
-    case "High":
-      return 9;
-    case "Moderate":
-      return 6;
-    default:
-      return 2;
-  }
-}
-
 function inRange(value: number | null, min: number, max: number): boolean {
   return value !== null && value >= min && value <= max;
 }
@@ -418,163 +287,8 @@ function makePredictedIsoformResult(args: {
     measuredValue: null,
     measuredUnit: null,
     measuredRelation: null,
-    measuredNote: null,
     details: args.details,
   };
-}
-
-function normalizeCompoundName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function normalizeIsoform(value: string): MeasuredSupportedIsoform | null {
-  const cleaned = value.toUpperCase().replace(/\s+/g, "");
-  return MEASURED_ISOFORM_ALIASES[cleaned] ?? null;
-}
-
-function parseConcentrationToMicromolar(value: number, unit: string): number | null {
-  const normalized = unit.trim().toLowerCase().replace(/μ/g, "u").replace(/µ/g, "u");
-  if (["um", "μm", "µm", "microm", "micromolar"].includes(normalized)) {
-    return value;
-  }
-  if (["nm", "nanom", "nanomolar"].includes(normalized)) {
-    return value / 1000;
-  }
-  if (["mm", "millim", "millimolar"].includes(normalized)) {
-    return value * 1000;
-  }
-  return null;
-}
-
-function measuredValueToPotential(
-  value: number,
-  unit: string,
-  relation?: string | null
-): PotentialLevel {
-  const asMicromolar = parseConcentrationToMicromolar(value, unit);
-  let potential: PotentialLevel;
-
-  if (asMicromolar == null) {
-    if (value <= 1) potential = "Very High";
-    else if (value <= 10) potential = "High";
-    else if (value <= 50) potential = "Moderate";
-    else potential = "Low";
-  } else if (asMicromolar <= 1) {
-    potential = "Very High";
-  } else if (asMicromolar <= 10) {
-    potential = "High";
-  } else if (asMicromolar <= 50) {
-    potential = "Moderate";
-  } else {
-    potential = "Low";
-  }
-
-  if (relation && relation.includes(">") && potential !== "Low") {
-    return potential === "Very High"
-      ? "High"
-      : potential === "High"
-        ? "Moderate"
-        : "Low";
-  }
-
-  return potential;
-}
-
-function applyMeasuredRecord(
-  predicted: CYPInhibitionScreening,
-  record?: MeasuredCYPRecord
-): CYPInhibitionScreening {
-  if (!record || predicted.isoform !== record.isoform) return predicted;
-  const potential = measuredValueToPotential(
-    record.value,
-    record.unit,
-    record.relation
-  );
-
-  return {
-    ...predicted,
-    score: potentialToRepresentativeScore(potential),
-    potential,
-    source: "measured",
-    measuredValue: record.value,
-    measuredUnit: record.unit,
-    measuredRelation: record.relation ?? null,
-    measuredNote: record.note ?? null,
-    summary: `Measured ${predicted.isoform} inhibition data available; experimental value shown with priority over prediction.`,
-    features: [
-      `Measured value available (${record.relation ?? ""}${record.value} ${record.unit})`,
-      ...predicted.features,
-    ],
-  };
-}
-
-export function parseMeasuredDataCsv(text: string): MeasuredCYPRecord[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-
-  const lines = trimmed
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-  if (lines.length < 2) return [];
-
-  const delimiter = lines[0].includes("\t") ? "\t" : ",";
-  const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
-
-  const findIndex = (...candidates: string[]) =>
-    headers.findIndex(header => candidates.includes(header));
-
-  const compoundIdx = findIndex("compound", "compound_name", "name", "drug");
-  const isoformIdx = findIndex("isoform", "cyp", "enzyme");
-  const valueIdx = findIndex("value", "ic50", "ki", "inhibition_value");
-  const unitIdx = findIndex("unit", "units");
-  const relationIdx = findIndex("relation", "operator", "sign");
-  const noteIdx = findIndex("note", "notes", "comment", "comments", "source");
-
-  if (compoundIdx === -1 || isoformIdx === -1 || valueIdx === -1) {
-    throw new Error(
-      "Measured data CSV must include compound, isoform, and value columns."
-    );
-  }
-
-  const records: MeasuredCYPRecord[] = [];
-  for (const line of lines.slice(1)) {
-    const cols = line.split(delimiter).map(part => part.trim().replace(/^"|"$/g, ""));
-    const compoundName = cols[compoundIdx] ?? "";
-    const isoform = normalizeIsoform(cols[isoformIdx] ?? "");
-    const value = Number(cols[valueIdx]);
-    const unit = unitIdx >= 0 ? cols[unitIdx] ?? "uM" : "uM";
-    const relation = relationIdx >= 0 ? cols[relationIdx] ?? null : null;
-    const note = noteIdx >= 0 ? cols[noteIdx] ?? null : null;
-
-    if (!compoundName || !isoform || !Number.isFinite(value)) continue;
-
-    records.push({
-      compoundName,
-      isoform,
-      value,
-      unit: unit || "uM",
-      relation,
-      note,
-    });
-  }
-
-  return records;
-}
-
-function buildMeasuredRecordMap(records: MeasuredCYPRecord[]) {
-  const mapped = new Map<string, MeasuredCYPRecord>();
-  for (const record of records) {
-    const key = `${normalizeCompoundName(record.compoundName)}::${record.isoform}`;
-    mapped.set(key, record);
-    if (record.isoform === "CYP3A4" && record.note?.toUpperCase().includes("3A5")) {
-      mapped.set(`${normalizeCompoundName(record.compoundName)}::CYP3A5`, {
-        ...record,
-        isoform: "CYP3A5",
-      });
-    }
-  }
-  return mapped;
 }
 
 export function screenCYP2E1(compound: CompoundProperties): CYP2E1Screening {
@@ -688,7 +402,6 @@ export function screenCYP2E1(compound: CompoundProperties): CYP2E1Screening {
     measuredValue: null,
     measuredUnit: null,
     measuredRelation: null,
-    measuredNote: null,
     details: {
       molecularVolume: { score: mvScore, description: mvDesc },
       hemeLigation: { score: hlScore, description: hlDesc },
@@ -836,53 +549,15 @@ function screenCYP3A4(compound: CompoundProperties): CYPInhibitionScreening {
   });
 }
 
-function screenCYP3A5(compound: CompoundProperties): CYPInhibitionScreening {
-  const { smiles, logP, mw, hba, hbd } = compound;
-  const s = smiles ?? "";
-  let score = 0;
-  const features: string[] = [];
-
-  score += addFeature(
-    features,
-    inRange(mw, 220, 620),
-    "Medium-to-large scaffold tolerated by CYP3A5",
-    2
-  );
-  score += addFeature(features, hasPhenylRing(s), "Hydrophobic aromatic surface", 2);
-  score += addFeature(features, inRange(logP, 1.5, 5.5), "Lipophilic binding profile", 2);
-  score += addFeature(features, hba !== null && hba >= 2, "Acceptor-rich contact pattern", 2);
-  score += addFeature(features, hbd !== null && hbd >= 1, "Polar interaction handle", 1);
-  if (hasEtherOrMethoxy(s) || hasBasicAmine(s)) {
-    score += 2;
-    features.push("Flexible heteroatom/basic motif");
-  }
-
-  return makePredictedIsoformResult({
-    isoform: "CYP3A5",
-    score,
-    features,
-    summary:
-      "Predicted from lipophilic aromatic scaffolds with heteroatom-mediated contacts, used here as a separate CYP3A5 heuristic from CYP3A4.",
-  });
-}
-
-export function screenCYP450Panel(
-  compound: CompoundProperties,
-  measuredRecords: MeasuredCYPRecord[] = []
-): CYP450Panel {
-  const recordMap = buildMeasuredRecordMap(measuredRecords);
-  const getMeasured = (isoform: MeasuredSupportedIsoform) =>
-    recordMap.get(`${normalizeCompoundName(compound.name)}::${isoform}`);
-
-  const cyp1a2 = applyMeasuredRecord(screenCYP1A2(compound), getMeasured("CYP1A2"));
+export function screenCYP450Panel(compound: CompoundProperties): CYP450Panel {
+  const cyp1a2 = screenCYP1A2(compound);
   const cyp2c9 = screenCYP2C9(compound);
   const cyp2c19 = screenCYP2C19(compound);
-  const cyp2d6 = applyMeasuredRecord(screenCYP2D6(compound), getMeasured("CYP2D6"));
+  const cyp2d6 = screenCYP2D6(compound);
   const cyp2e1 = screenCYP2E1(compound);
-  const cyp3a4 = applyMeasuredRecord(screenCYP3A4(compound), getMeasured("CYP3A4"));
-  const cyp3a5 = applyMeasuredRecord(screenCYP3A5(compound), getMeasured("CYP3A5"));
+  const cyp3a4 = screenCYP3A4(compound);
 
-  const entries = [cyp1a2, cyp2c9, cyp2c19, cyp2d6, cyp2e1, cyp3a4, cyp3a5];
+  const entries = [cyp1a2, cyp2c9, cyp2c19, cyp2d6, cyp2e1, cyp3a4];
   const panelSummary = finalizeCYP450Panel(entries);
 
   return {
@@ -892,7 +567,6 @@ export function screenCYP450Panel(
     cyp2d6,
     cyp2e1,
     cyp3a4,
-    cyp3a5,
     ...panelSummary,
   };
 }
