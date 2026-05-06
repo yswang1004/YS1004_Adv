@@ -31,7 +31,28 @@ export default function History() {
     // Reconstruct ScreeningResult[] from DB rows
     const results: ScreeningResult[] = sessionResults.map(row => {
       if (row.resultJson) {
-        return row.resultJson as unknown as ScreeningResult;
+        const stored = row.resultJson as unknown as ScreeningResult;
+        if (stored.cyp450?.cyp3a5) {
+          return stored;
+        }
+        return {
+          ...stored,
+          cyp450: {
+            ...stored.cyp450,
+            cyp3a5: {
+              isoform: "CYP3A5",
+              score: 0,
+              potential: "Low",
+              features: [],
+              summary: "Historical session did not store CYP3A5 panel data.",
+              source: "predicted",
+              measuredValue: null,
+              measuredUnit: null,
+              measuredRelation: null,
+              measuredNote: null,
+            },
+          },
+        };
       }
       // Fallback reconstruction from flat fields
       return {
@@ -55,15 +76,95 @@ export default function History() {
           bbbPotential: (row.bbbPotential ?? "Low") as any,
         },
         cyp2e1: {
+          isoform: "CYP2E1",
           score: row.cypScore ?? 0,
           potential: (row.cypPotential ?? "Low") as any,
           features: row.cypFeatures ? row.cypFeatures.split("; ") : [],
+          summary: "Recovered from historical session.",
+          source: "predicted",
+          measuredValue: null,
+          measuredUnit: null,
+          measuredRelation: null,
           details: {
             molecularVolume: { score: 0, description: "" },
             hemeLigation: { score: 0, description: "" },
             hydrophobicInteraction: { score: 0, description: "" },
             hydrogenBonding: { score: 0, description: "" },
           },
+        },
+        cyp450: {
+          cyp1a2: {
+            isoform: "CYP1A2",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP1A2 panel data.",
+            source: "predicted",
+          },
+          cyp2c9: {
+            isoform: "CYP2C9",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP2C9 panel data.",
+            source: "predicted",
+          },
+          cyp2c19: {
+            isoform: "CYP2C19",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP2C19 panel data.",
+            source: "predicted",
+          },
+          cyp2d6: {
+            isoform: "CYP2D6",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP2D6 panel data.",
+            source: "predicted",
+          },
+          cyp2e1: {
+            isoform: "CYP2E1",
+            score: row.cypScore ?? 0,
+            potential: (row.cypPotential ?? "Low") as any,
+            features: row.cypFeatures ? row.cypFeatures.split("; ") : [],
+            summary: "Recovered from historical session.",
+            source: "predicted",
+            measuredValue: null,
+            measuredUnit: null,
+            measuredRelation: null,
+            details: {
+              molecularVolume: { score: 0, description: "" },
+              hemeLigation: { score: 0, description: "" },
+              hydrophobicInteraction: { score: 0, description: "" },
+              hydrogenBonding: { score: 0, description: "" },
+            },
+          },
+          cyp3a4: {
+            isoform: "CYP3A4",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP3A4 panel data.",
+            source: "predicted",
+          },
+          cyp3a5: {
+            isoform: "CYP3A5",
+            score: 0,
+            potential: "Low",
+            features: [],
+            summary: "Historical session did not store CYP3A5 panel data.",
+            source: "predicted",
+            measuredValue: null,
+            measuredUnit: null,
+            measuredRelation: null,
+            measuredNote: null,
+          },
+          majorFamilyScore: Number(((row.cypScore ?? 0) / 7).toFixed(2)),
+          overallPotential: (row.cypPotential ?? "Low") as any,
+          topIsoforms: ["CYP2E1"],
         },
       };
     });

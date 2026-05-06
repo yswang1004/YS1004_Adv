@@ -37,18 +37,49 @@ type SortField =
   | "logPS"
   | "kpuuBrain"
   | "bbbPotential"
+  | "majorCypScore"
+  | "majorCypPotential"
   | "cyp2e1Score"
   | "cyp2e1Potential"
+  | "cyp1a2Potential"
+  | "cyp2c9Potential"
+  | "cyp2c19Potential"
+  | "cyp2d6Potential"
+  | "cyp3a4Potential"
+  | "cyp3a5Potential"
   | "admetlabRules"
   | "boiledEgg";
 
 type SortDirection = "asc" | "desc";
+type IsoformKey = "cyp1a2" | "cyp2c9" | "cyp2c19" | "cyp2d6" | "cyp3a4" | "cyp3a5";
 
 const potentialOrder = { "Very High": 4, High: 3, Moderate: 2, Low: 1 };
+const ISOFORM_COLUMNS: Array<{
+  key: IsoformKey;
+  field:
+    | "cyp1a2Potential"
+    | "cyp2c9Potential"
+    | "cyp2c19Potential"
+    | "cyp2d6Potential"
+    | "cyp3a4Potential"
+    | "cyp3a5Potential";
+  label: string;
+}> = [
+  { key: "cyp1a2", field: "cyp1a2Potential", label: "CYP1A2" },
+  { key: "cyp2c9", field: "cyp2c9Potential", label: "CYP2C9" },
+  { key: "cyp2c19", field: "cyp2c19Potential", label: "CYP2C19" },
+  { key: "cyp2d6", field: "cyp2d6Potential", label: "CYP2D6" },
+  { key: "cyp3a4", field: "cyp3a4Potential", label: "CYP3A4" },
+  { key: "cyp3a5", field: "cyp3a5Potential", label: "CYP3A5" },
+];
+const getPotentialRank = (value?: string) =>
+  value && value in potentialOrder
+    ? potentialOrder[value as keyof typeof potentialOrder]
+    : -Infinity;
 
 export default function Results() {
   const [results, setResults] = useState<ScreeningResult[]>([]);
-  const [sortField, setSortField] = useState<SortField>("bbbPotential");
+  const [sortField, setSortField] = useState<SortField>("majorCypScore");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [filter, setFilter] = useState("");
   const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
@@ -78,6 +109,7 @@ export default function Results() {
   };
 
   const filteredAndSorted = useMemo(() => {
+    const getIsoform = (r: ScreeningResult, key: IsoformKey) => r.cyp450?.[key];
     let data = [...results];
     if (filter.trim()) {
       const q = filter.toLowerCase();
@@ -119,16 +151,48 @@ export default function Results() {
           valB = b.bbb.kpuuBrain ?? -Infinity;
           break;
         case "bbbPotential":
-          valA = potentialOrder[a.bbb.bbbPotential];
-          valB = potentialOrder[b.bbb.bbbPotential];
+          valA = getPotentialRank(a.bbb.bbbPotential);
+          valB = getPotentialRank(b.bbb.bbbPotential);
+          break;
+        case "majorCypScore":
+          valA = a.cyp450?.majorFamilyScore ?? -Infinity;
+          valB = b.cyp450?.majorFamilyScore ?? -Infinity;
+          break;
+        case "majorCypPotential":
+          valA = getPotentialRank(a.cyp450?.overallPotential);
+          valB = getPotentialRank(b.cyp450?.overallPotential);
           break;
         case "cyp2e1Score":
           valA = a.cyp2e1.score;
           valB = b.cyp2e1.score;
           break;
         case "cyp2e1Potential":
-          valA = potentialOrder[a.cyp2e1.potential];
-          valB = potentialOrder[b.cyp2e1.potential];
+          valA = getPotentialRank(a.cyp2e1?.potential);
+          valB = getPotentialRank(b.cyp2e1?.potential);
+          break;
+        case "cyp1a2Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp1a2")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp1a2")?.potential);
+          break;
+        case "cyp2c9Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp2c9")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp2c9")?.potential);
+          break;
+        case "cyp2c19Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp2c19")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp2c19")?.potential);
+          break;
+        case "cyp2d6Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp2d6")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp2d6")?.potential);
+          break;
+        case "cyp3a4Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp3a4")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp3a4")?.potential);
+          break;
+        case "cyp3a5Potential":
+          valA = getPotentialRank(getIsoform(a, "cyp3a5")?.potential);
+          valB = getPotentialRank(getIsoform(b, "cyp3a5")?.potential);
           break;
         case "admetlabRules":
           valA = a.bbb.admetlabRulesPassed;
@@ -202,9 +266,13 @@ export default function Results() {
       "LogPS",
       "Kp,uu,brain",
       "BBB Potential",
+      "Major CYP450 Score",
+      "Major CYP450 Potential",
+      "Top CYP Isoforms",
       "CYP2E1 Score",
       "CYP2E1 Potential",
       "CYP2E1 Features",
+      ...ISOFORM_COLUMNS.map(col => `${col.label} Potential`),
     ];
     const rows = filteredAndSorted.map(r => [
       r.compound.name,
@@ -219,9 +287,13 @@ export default function Results() {
       r.bbb.logPS ?? "",
       r.bbb.kpuuBrain ?? "",
       r.bbb.bbbPotential,
+      r.cyp450?.majorFamilyScore ?? "",
+      r.cyp450?.overallPotential ?? "",
+      r.cyp450?.topIsoforms?.join("; ") ?? "",
       r.cyp2e1.score,
       r.cyp2e1.potential,
       r.cyp2e1.features.join("; "),
+      ...ISOFORM_COLUMNS.map(col => r.cyp450?.[col.key]?.potential ?? ""),
     ]);
     const csv = [headers, ...rows]
       .map(row =>
@@ -432,12 +504,23 @@ export default function Results() {
                     <SortableHeader field="logPS">LogPS</SortableHeader>
                     <SortableHeader field="kpuuBrain">Kp,uu</SortableHeader>
                     <SortableHeader field="bbbPotential">BBB</SortableHeader>
+                    <SortableHeader field="majorCypScore">
+                      Major CYP450 Score
+                    </SortableHeader>
+                    <SortableHeader field="majorCypPotential">
+                      Major CYP450
+                    </SortableHeader>
                     <SortableHeader field="cyp2e1Score">
                       CYP Score
                     </SortableHeader>
                     <SortableHeader field="cyp2e1Potential">
                       CYP2E1
                     </SortableHeader>
+                    {ISOFORM_COLUMNS.map(col => (
+                      <SortableHeader key={col.field} field={col.field}>
+                        {col.label}
+                      </SortableHeader>
+                    ))}
                     <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
@@ -525,11 +608,32 @@ export default function Results() {
                           <LevelBadge level={r.bbb.bbbPotential} />
                         </TableCell>
                         <TableCell className="font-mono text-sm font-semibold">
+                          {r.cyp450?.majorFamilyScore != null
+                            ? Number(r.cyp450.majorFamilyScore).toFixed(2)
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {r.cyp450?.overallPotential ? (
+                            <LevelBadge level={r.cyp450.overallPotential} />
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm font-semibold">
                           {r.cyp2e1.score}
                         </TableCell>
                         <TableCell>
                           <LevelBadge level={r.cyp2e1.potential} />
                         </TableCell>
+                        {ISOFORM_COLUMNS.map(col => (
+                          <TableCell key={col.key}>
+                            {r.cyp450?.[col.key] ? (
+                              <LevelBadge level={r.cyp450[col.key].potential} />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        ))}
                         <TableCell>
                           <Link href={`/compound/${originalIndex}`}>
                             <Button

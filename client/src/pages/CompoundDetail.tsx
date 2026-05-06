@@ -19,6 +19,18 @@ import {
 import { toast } from "sonner";
 import type { ScreeningResult } from "../../../shared/types";
 
+const PANEL_ISOFORMS = [
+  { key: "cyp1a2", label: "CYP1A2" },
+  { key: "cyp2c9", label: "CYP2C9" },
+  { key: "cyp2c19", label: "CYP2C19" },
+  { key: "cyp2d6", label: "CYP2D6" },
+  { key: "cyp2e1", label: "CYP2E1" },
+  { key: "cyp3a4", label: "CYP3A4" },
+  { key: "cyp3a5", label: "CYP3A5" },
+] as const;
+
+type IsoformEntry = ScreeningResult["cyp450"][typeof PANEL_ISOFORMS[number]["key"]];
+
 export default function CompoundDetail() {
   const params = useParams<{ index: string }>();
   const [result, setResult] = useState<ScreeningResult | null>(null);
@@ -127,6 +139,7 @@ export default function CompoundDetail() {
   }
 
   const { compound, bbb, cyp2e1 } = result;
+  const cypPanel = result.cyp450;
 
   const copySmiles = () => {
     if (compound.smiles) {
@@ -520,7 +533,7 @@ export default function CompoundDetail() {
                   </p>
                 )}
               </CardContent>
-            </Card>
+              </Card>
           </div>
 
           {/* Middle: BBB Screening */}
@@ -628,7 +641,8 @@ export default function CompoundDetail() {
           </Card>
 
           {/* Right: CYP2E1 Screening */}
-          <Card className="card-glow bg-card border-border">
+          <div className="space-y-6">
+            <Card className="card-glow bg-card border-border">
             <CardContent className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -702,7 +716,55 @@ export default function CompoundDetail() {
                 </div>
               )}
             </CardContent>
+            </Card>
+
+            <Card className="card-glow bg-card border-border">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-primary" />
+                  <h3 className="text-sm font-semibold text-foreground">
+                    CYP450 Panel Summary
+                  </h3>
+                </div>
+                {cypPanel?.overallPotential ? (
+                  <LevelBadge level={cypPanel.overallPotential} />
+                ) : null}
+              </div>
+
+              {cypPanel ? (
+                <div className="space-y-3">
+                  <div className="rounded-md border border-border/50 px-3 py-2.5 bg-muted/20">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-medium text-foreground">
+                        Major CYP450 family score
+                      </span>
+                      <span className="text-sm font-mono font-semibold text-foreground">
+                        {Number(cypPanel.majorFamilyScore).toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/70 mt-1 leading-relaxed">
+                      Primary screening focus across CYP1A2, CYP2C9, CYP2C19, CYP2D6, CYP2E1, CYP3A4, and CYP3A5.
+                      Top signal: {cypPanel.topIsoforms.join(", ") || "—"}
+                    </p>
+                  </div>
+                  {PANEL_ISOFORMS.map(item => (
+                    <IsoformRow
+                      key={item.key}
+                      label={item.label}
+                      entry={cypPanel[item.key]}
+                    />
+                  ))}
+                  <p className="text-[11px] text-muted-foreground/70 pt-2 border-t border-border/50 leading-relaxed">
+                    若未提供實測 inhibition 數值，目前以結構與理化特徵進行預測；若有匯入實測 IC50/Ki，CYP1A2 / CYP2D6 / CYP3A4 / CYP3A5 會優先顯示實測來源與數值。
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No CYP450 panel data.</p>
+              )}
+            </CardContent>
           </Card>
+          </div>
         </div>
       </div>
     </div>
@@ -753,6 +815,57 @@ function ScoreSection({
       <Progress value={(score / maxScore) * 100} className="h-1.5 mb-1" />
       <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
         {description}
+      </p>
+    </div>
+  );
+}
+
+function formatIsoformValue(entry: IsoformEntry) {
+  if (entry.source === "measured" && entry.measuredValue != null) {
+    return `${entry.measuredRelation ?? ""}${entry.measuredValue}${entry.measuredUnit ? ` ${entry.measuredUnit}` : ""}`;
+  }
+  return `Score ${entry.score}`;
+}
+
+function IsoformRow({
+  label,
+  entry,
+}: {
+  label: string;
+  entry?: IsoformEntry;
+}) {
+  if (!entry) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2">
+        <span className="text-xs font-medium text-foreground">{label}</span>
+        <span className="text-xs text-muted-foreground">—</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border/50 px-3 py-2.5 space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-foreground">{label}</span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border ${
+              entry.source === "measured"
+                ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                : "bg-muted text-muted-foreground border-border"
+            }`}
+          >
+            {entry.source}
+          </span>
+          <span className="text-[11px] font-mono text-muted-foreground">
+            {formatIsoformValue(entry)}
+          </span>
+          <LevelBadge level={entry.potential} />
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+        {entry.summary}
+        {entry.measuredNote ? ` (${entry.measuredNote})` : ""}
       </p>
     </div>
   );
