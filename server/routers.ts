@@ -7,7 +7,8 @@ import {
   screenCompound,
   screenCompounds,
   screenBBB,
-  screenCYP2E1,
+  screenCYP450Panel,
+  parseMeasuredDataCsv,
 } from "./screening";
 import {
   saveScreeningSession,
@@ -166,16 +167,20 @@ export const appRouter = router({
     /**
      * Screen compounds with pre-fetched data from frontend.
      * The frontend fetches PubChem data directly (CORS-enabled),
-     * then sends the data here for BBB + CYP2E1 screening calculations.
-     * This avoids PubChem blocking server-side requests (HTTP 503).
+     * then sends the data here for BBB + CYP450 screening calculations.
      */
     screenWithData: publicProcedure
       .input(
         z.object({
           compounds: z.array(compoundDataSchema).min(1).max(100),
+          measuredDataCsv: z.string().optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
+        const measuredRecords = input.measuredDataCsv
+          ? parseMeasuredDataCsv(input.measuredDataCsv)
+          : [];
+
         const results: ScreeningResult[] = input.compounds.map(compoundData => {
           const compound: CompoundProperties = {
             name: compoundData.name,
@@ -190,11 +195,10 @@ export const appRouter = router({
             errorMessage: compoundData.errorMessage,
           };
           const bbb = screenBBB(compound);
-          const cyp2e1 = screenCYP2E1(compound);
-          return { compound, bbb, cyp2e1 };
+          const cyp450 = screenCYP450Panel(compound, measuredRecords);
+          return { compound, bbb, cyp2e1: cyp450.cyp2e1, cyp450 };
         });
 
-        // Save to database in background
         const userId = ctx.user?.id ?? null;
         saveScreeningSession(userId, results).catch(err =>
           console.error("[Screening] Failed to save session:", err)
@@ -209,7 +213,6 @@ export const appRouter = router({
         z.object({ limit: z.number().min(1).max(50).optional() }).optional()
       )
       .query(async ({ ctx, input }) => {
-        // SitePasswordOnly mode: no per-user DB history
         return getScreeningHistory(ctx.user?.id ?? null, input?.limit ?? 20);
       }),
 
@@ -217,7 +220,6 @@ export const appRouter = router({
     sessionResults: publicProcedure
       .input(z.object({ sessionId: z.number() }))
       .query(async ({ input }) => {
-        // SitePasswordOnly mode: no user scoping
         return getSessionResults(input.sessionId);
       }),
   }),

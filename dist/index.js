@@ -1056,6 +1056,20 @@ var systemRouter = router({
 import { z as z2 } from "zod";
 
 // server/screening.ts
+var MEASURED_ISOFORM_ALIASES = {
+  CYP1A2: "CYP1A2",
+  "1A2": "CYP1A2",
+  CYP2D6: "CYP2D6",
+  "2D6": "CYP2D6",
+  CYP3A4: "CYP3A4",
+  "3A4": "CYP3A4",
+  CYP3A5: "CYP3A5",
+  "3A5": "CYP3A5",
+  "CYP3A4/5": "CYP3A4",
+  "CYP3A4/3A5": "CYP3A4",
+  "3A4/5": "CYP3A4",
+  "3A4/3A5": "CYP3A4"
+};
 async function fetchCompoundFromPubChem(name) {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -1199,7 +1213,7 @@ function hasSulfurAtom(smiles) {
 }
 function hasNHeterocycle(smiles) {
   const lower = smiles.toLowerCase();
-  if (/n\d|n[^a-z]|\[nH\]|n.*n/.test(lower)) return true;
+  if (/n\d|n[^a-z]|\[nh\]|n.*n/.test(lower)) return true;
   if (/N\d|N[^A-Za-z].*\d|\d.*N/.test(smiles)) return true;
   if (/N=C.*N|N.*C=N|C=NN/.test(smiles)) return true;
   return false;
@@ -1209,6 +1223,195 @@ function hasPhenylRing(smiles) {
   if ((smiles.match(/[c]/g) || []).length >= 5) return true;
   if (/C1=CC=CC=C1|C1=CC=C\(.*\)C=C1/.test(smiles)) return true;
   return false;
+}
+function countAromaticAtoms(smiles) {
+  return (smiles.match(/[cnos]/g) || []).length;
+}
+function countNitrogenAtoms(smiles) {
+  const matches = smiles.match(/N|n/g);
+  return matches ? matches.length : 0;
+}
+function hasHalogen(smiles) {
+  return /Cl|Br|F|I/.test(smiles);
+}
+function hasEtherOrMethoxy(smiles) {
+  return /COC|Oc|cO|CO[^N]/.test(smiles);
+}
+function hasBasicAmine(smiles) {
+  return /N\(|N[Cc]|CN|NCC|N1|n1/.test(smiles);
+}
+function scoreToPotential(score) {
+  if (score >= 11) return "Very High";
+  if (score >= 8) return "High";
+  if (score >= 5) return "Moderate";
+  return "Low";
+}
+function potentialToRepresentativeScore(potential) {
+  switch (potential) {
+    case "Very High":
+      return 12;
+    case "High":
+      return 9;
+    case "Moderate":
+      return 6;
+    default:
+      return 2;
+  }
+}
+function inRange(value, min, max) {
+  return value !== null && value >= min && value <= max;
+}
+function addFeature(features, enabled, label, scoreValue) {
+  if (!enabled) return 0;
+  features.push(label);
+  return scoreValue;
+}
+function finalizeCYP450Panel(entries) {
+  const majorFamilyScore = Number(
+    (entries.reduce((sum, item) => sum + item.score, 0) / entries.length).toFixed(2)
+  );
+  const overallPotential = scoreToPotential(Math.round(majorFamilyScore));
+  const topScore = Math.max(...entries.map((item) => item.score));
+  const topIsoforms = entries.filter((item) => item.score === topScore).map((item) => item.isoform);
+  return {
+    majorFamilyScore,
+    overallPotential,
+    topIsoforms
+  };
+}
+function makePredictedIsoformResult(args) {
+  return {
+    isoform: args.isoform,
+    score: args.score,
+    potential: scoreToPotential(args.score),
+    features: args.features,
+    summary: args.summary,
+    source: "predicted",
+    measuredValue: null,
+    measuredUnit: null,
+    measuredRelation: null,
+    measuredNote: null,
+    details: args.details
+  };
+}
+function normalizeCompoundName(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function normalizeIsoform(value) {
+  const cleaned = value.toUpperCase().replace(/\s+/g, "");
+  return MEASURED_ISOFORM_ALIASES[cleaned] ?? null;
+}
+function parseConcentrationToMicromolar(value, unit) {
+  const normalized = unit.trim().toLowerCase().replace(/μ/g, "u").replace(/µ/g, "u");
+  if (["um", "\u03BCm", "\xB5m", "microm", "micromolar"].includes(normalized)) {
+    return value;
+  }
+  if (["nm", "nanom", "nanomolar"].includes(normalized)) {
+    return value / 1e3;
+  }
+  if (["mm", "millim", "millimolar"].includes(normalized)) {
+    return value * 1e3;
+  }
+  return null;
+}
+function measuredValueToPotential(value, unit, relation) {
+  const asMicromolar = parseConcentrationToMicromolar(value, unit);
+  let potential;
+  if (asMicromolar == null) {
+    if (value <= 1) potential = "Very High";
+    else if (value <= 10) potential = "High";
+    else if (value <= 50) potential = "Moderate";
+    else potential = "Low";
+  } else if (asMicromolar <= 1) {
+    potential = "Very High";
+  } else if (asMicromolar <= 10) {
+    potential = "High";
+  } else if (asMicromolar <= 50) {
+    potential = "Moderate";
+  } else {
+    potential = "Low";
+  }
+  if (relation && relation.includes(">") && potential !== "Low") {
+    return potential === "Very High" ? "High" : potential === "High" ? "Moderate" : "Low";
+  }
+  return potential;
+}
+function applyMeasuredRecord(predicted, record) {
+  if (!record || predicted.isoform !== record.isoform) return predicted;
+  const potential = measuredValueToPotential(
+    record.value,
+    record.unit,
+    record.relation
+  );
+  return {
+    ...predicted,
+    score: potentialToRepresentativeScore(potential),
+    potential,
+    source: "measured",
+    measuredValue: record.value,
+    measuredUnit: record.unit,
+    measuredRelation: record.relation ?? null,
+    measuredNote: record.note ?? null,
+    summary: `Measured ${predicted.isoform} inhibition data available; experimental value shown with priority over prediction.`,
+    features: [
+      `Measured value available (${record.relation ?? ""}${record.value} ${record.unit})`,
+      ...predicted.features
+    ]
+  };
+}
+function parseMeasuredDataCsv(text2) {
+  const trimmed = text2.trim();
+  if (!trimmed) return [];
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+  const delimiter = lines[0].includes("	") ? "	" : ",";
+  const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+  const findIndex = (...candidates) => headers.findIndex((header) => candidates.includes(header));
+  const compoundIdx = findIndex("compound", "compound_name", "name", "drug");
+  const isoformIdx = findIndex("isoform", "cyp", "enzyme");
+  const valueIdx = findIndex("value", "ic50", "ki", "inhibition_value");
+  const unitIdx = findIndex("unit", "units");
+  const relationIdx = findIndex("relation", "operator", "sign");
+  const noteIdx = findIndex("note", "notes", "comment", "comments", "source");
+  if (compoundIdx === -1 || isoformIdx === -1 || valueIdx === -1) {
+    throw new Error(
+      "Measured data CSV must include compound, isoform, and value columns."
+    );
+  }
+  const records = [];
+  for (const line of lines.slice(1)) {
+    const cols = line.split(delimiter).map((part) => part.trim().replace(/^"|"$/g, ""));
+    const compoundName = cols[compoundIdx] ?? "";
+    const isoform = normalizeIsoform(cols[isoformIdx] ?? "");
+    const value = Number(cols[valueIdx]);
+    const unit = unitIdx >= 0 ? cols[unitIdx] ?? "uM" : "uM";
+    const relation = relationIdx >= 0 ? cols[relationIdx] ?? null : null;
+    const note = noteIdx >= 0 ? cols[noteIdx] ?? null : null;
+    if (!compoundName || !isoform || !Number.isFinite(value)) continue;
+    records.push({
+      compoundName,
+      isoform,
+      value,
+      unit: unit || "uM",
+      relation,
+      note
+    });
+  }
+  return records;
+}
+function buildMeasuredRecordMap(records) {
+  const mapped = /* @__PURE__ */ new Map();
+  for (const record of records) {
+    const key = `${normalizeCompoundName(record.compoundName)}::${record.isoform}`;
+    mapped.set(key, record);
+    if (record.isoform === "CYP3A4" && record.note?.toUpperCase().includes("3A5")) {
+      mapped.set(`${normalizeCompoundName(record.compoundName)}::CYP3A5`, {
+        ...record,
+        isoform: "CYP3A5"
+      });
+    }
+  }
+  return mapped;
 }
 function screenCYP2E1(compound) {
   const { mw, logP, smiles, hbd, hba } = compound;
@@ -1302,20 +1505,18 @@ function screenCYP2E1(compound) {
     hbDesc = "HBD/HBA data unavailable";
   }
   totalScore += hbScore;
-  let potential;
-  if (totalScore >= 11) {
-    potential = "Very High";
-  } else if (totalScore >= 8) {
-    potential = "High";
-  } else if (totalScore >= 5) {
-    potential = "Moderate";
-  } else {
-    potential = "Low";
-  }
+  const potential = scoreToPotential(totalScore);
   return {
+    isoform: "CYP2E1",
     score: totalScore,
     potential,
     features,
+    summary: `Predicted ${potential} CYP2E1 inhibition potential based on size, heme ligation, hydrophobicity, and H-bond profile.`,
+    source: "predicted",
+    measuredValue: null,
+    measuredUnit: null,
+    measuredRelation: null,
+    measuredNote: null,
     details: {
       molecularVolume: { score: mvScore, description: mvDesc },
       hemeLigation: { score: hlScore, description: hlDesc },
@@ -1324,11 +1525,178 @@ function screenCYP2E1(compound) {
     }
   };
 }
+function screenCYP1A2(compound) {
+  const { smiles, logP, mw } = compound;
+  const s = smiles ?? "";
+  const aromaticAtoms = countAromaticAtoms(s);
+  const nitrogens = countNitrogenAtoms(s);
+  let score = 0;
+  const features = [];
+  if (aromaticAtoms >= 6) {
+    score += 4;
+    features.push("Extended aromatic surface");
+  } else if (aromaticAtoms >= 3) {
+    score += 2;
+  }
+  score += addFeature(features, nitrogens >= 1, "Ring/basic nitrogen", 3);
+  score += addFeature(
+    features,
+    inRange(logP, 1.5, 4.5),
+    "Favorable lipophilicity",
+    2
+  );
+  if (mw !== null && mw <= 400) {
+    score += 2;
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP1A2",
+    score,
+    features,
+    summary: "Predicted from aromaticity, nitrogen-containing motifs, and moderate lipophilicity typical of CYP1A2 binders."
+  });
+}
+function screenCYP2C9(compound) {
+  const { smiles, logP, hba, mw } = compound;
+  const s = smiles ?? "";
+  let score = 0;
+  const features = [];
+  score += addFeature(features, hasPhenylRing(s), "Hydrophobic/aromatic anchor", 3);
+  score += addFeature(features, hasHalogen(s), "Halogen substituent", 2);
+  score += addFeature(features, hba !== null && hba >= 2, "Acceptor-rich motif", 2);
+  if (inRange(logP, 2, 5)) {
+    score += 2;
+  }
+  if (mw !== null && mw >= 220 && mw <= 450) {
+    score += 2;
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP2C9",
+    score,
+    features,
+    summary: "Predicted from hydrophobic aromatic motifs, halogens, and moderate-to-high lipophilicity often associated with CYP2C9 inhibition."
+  });
+}
+function screenCYP2C19(compound) {
+  const { smiles, logP, hba } = compound;
+  const s = smiles ?? "";
+  let score = 0;
+  const features = [];
+  score += addFeature(features, hasNHeterocycle(s), "N-heterocycle", 4);
+  score += addFeature(features, hasEtherOrMethoxy(s), "Ether/methoxy motif", 2);
+  score += addFeature(features, hasPhenylRing(s), "Aromatic ring", 2);
+  if (inRange(logP, 1, 4.5)) {
+    score += 2;
+  }
+  if (hba !== null && hba >= 2) {
+    score += 1;
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP2C19",
+    score,
+    features,
+    summary: "Predicted from N-heterocycles, ether-containing motifs, and aromatic lipophilic features commonly seen in CYP2C19 inhibitors."
+  });
+}
+function screenCYP2D6(compound) {
+  const { smiles, logP, mw } = compound;
+  const s = smiles ?? "";
+  let score = 0;
+  const features = [];
+  score += addFeature(features, hasBasicAmine(s), "Basic amine center", 5);
+  score += addFeature(features, hasPhenylRing(s), "Aromatic pharmacophore", 2);
+  if (inRange(logP, 1.5, 5)) {
+    score += 2;
+  }
+  if (mw !== null && mw >= 180 && mw <= 450) {
+    score += 1;
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP2D6",
+    score,
+    features,
+    summary: "Predicted from basic amines plus aromatic features, the classic interaction pattern for CYP2D6 ligands."
+  });
+}
+function screenCYP3A4(compound) {
+  const { smiles, logP, mw, hba } = compound;
+  const s = smiles ?? "";
+  let score = 0;
+  const features = [];
+  score += addFeature(
+    features,
+    inRange(mw, 250, 650),
+    "Larger scaffold tolerated by CYP3A4",
+    3
+  );
+  score += addFeature(features, hasPhenylRing(s), "Hydrophobic aromatic motif", 2);
+  score += addFeature(features, inRange(logP, 2, 6), "High lipophilicity", 3);
+  if (hba !== null && hba >= 2) {
+    score += 1;
+  }
+  if (hasHalogen(s) || hasEtherOrMethoxy(s)) {
+    score += 1;
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP3A4",
+    score,
+    features,
+    summary: "Predicted from bulkier lipophilic scaffolds and broad hydrophobic contact potential characteristic of CYP3A4 binders."
+  });
+}
+function screenCYP3A5(compound) {
+  const { smiles, logP, mw, hba, hbd } = compound;
+  const s = smiles ?? "";
+  let score = 0;
+  const features = [];
+  score += addFeature(
+    features,
+    inRange(mw, 220, 620),
+    "Medium-to-large scaffold tolerated by CYP3A5",
+    2
+  );
+  score += addFeature(features, hasPhenylRing(s), "Hydrophobic aromatic surface", 2);
+  score += addFeature(features, inRange(logP, 1.5, 5.5), "Lipophilic binding profile", 2);
+  score += addFeature(features, hba !== null && hba >= 2, "Acceptor-rich contact pattern", 2);
+  score += addFeature(features, hbd !== null && hbd >= 1, "Polar interaction handle", 1);
+  if (hasEtherOrMethoxy(s) || hasBasicAmine(s)) {
+    score += 2;
+    features.push("Flexible heteroatom/basic motif");
+  }
+  return makePredictedIsoformResult({
+    isoform: "CYP3A5",
+    score,
+    features,
+    summary: "Predicted from lipophilic aromatic scaffolds with heteroatom-mediated contacts, used here as a separate CYP3A5 heuristic from CYP3A4."
+  });
+}
+function screenCYP450Panel(compound, measuredRecords = []) {
+  const recordMap = buildMeasuredRecordMap(measuredRecords);
+  const getMeasured = (isoform) => recordMap.get(`${normalizeCompoundName(compound.name)}::${isoform}`);
+  const cyp1a2 = applyMeasuredRecord(screenCYP1A2(compound), getMeasured("CYP1A2"));
+  const cyp2c9 = screenCYP2C9(compound);
+  const cyp2c19 = screenCYP2C19(compound);
+  const cyp2d6 = applyMeasuredRecord(screenCYP2D6(compound), getMeasured("CYP2D6"));
+  const cyp2e1 = screenCYP2E1(compound);
+  const cyp3a4 = applyMeasuredRecord(screenCYP3A4(compound), getMeasured("CYP3A4"));
+  const cyp3a5 = applyMeasuredRecord(screenCYP3A5(compound), getMeasured("CYP3A5"));
+  const entries = [cyp1a2, cyp2c9, cyp2c19, cyp2d6, cyp2e1, cyp3a4, cyp3a5];
+  const panelSummary = finalizeCYP450Panel(entries);
+  return {
+    cyp1a2,
+    cyp2c9,
+    cyp2c19,
+    cyp2d6,
+    cyp2e1,
+    cyp3a4,
+    cyp3a5,
+    ...panelSummary
+  };
+}
 async function screenCompound(name) {
   const compound = await fetchCompoundFromPubChem(name);
   const bbb = screenBBB(compound);
-  const cyp2e1 = screenCYP2E1(compound);
-  return { compound, bbb, cyp2e1 };
+  const cyp450 = screenCYP450Panel(compound);
+  return { compound, bbb, cyp2e1: cyp450.cyp2e1, cyp450 };
 }
 async function screenCompounds(names) {
   const results = [];
@@ -1465,14 +1833,15 @@ var appRouter = router({
     /**
      * Screen compounds with pre-fetched data from frontend.
      * The frontend fetches PubChem data directly (CORS-enabled),
-     * then sends the data here for BBB + CYP2E1 screening calculations.
-     * This avoids PubChem blocking server-side requests (HTTP 503).
+     * then sends the data here for BBB + CYP450 screening calculations.
      */
     screenWithData: publicProcedure.input(
       z2.object({
-        compounds: z2.array(compoundDataSchema).min(1).max(100)
+        compounds: z2.array(compoundDataSchema).min(1).max(100),
+        measuredDataCsv: z2.string().optional()
       })
     ).mutation(async ({ input, ctx }) => {
+      const measuredRecords = input.measuredDataCsv ? parseMeasuredDataCsv(input.measuredDataCsv) : [];
       const results = input.compounds.map((compoundData) => {
         const compound = {
           name: compoundData.name,
@@ -1487,8 +1856,8 @@ var appRouter = router({
           errorMessage: compoundData.errorMessage
         };
         const bbb = screenBBB(compound);
-        const cyp2e1 = screenCYP2E1(compound);
-        return { compound, bbb, cyp2e1 };
+        const cyp450 = screenCYP450Panel(compound, measuredRecords);
+        return { compound, bbb, cyp2e1: cyp450.cyp2e1, cyp450 };
       });
       const userId = ctx.user?.id ?? null;
       saveScreeningSession(userId, results).catch(
