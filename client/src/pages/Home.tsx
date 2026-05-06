@@ -13,13 +13,11 @@ import {
   Loader2,
   Sparkles,
   AlertCircle,
-  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Home() {
   const [input, setInput] = useState("");
-  const [measuredDataCsv, setMeasuredDataCsv] = useState("");
   const [, navigate] = useLocation();
   const [isScreening, setIsScreening] = useState(false);
   const [progress, setProgress] = useState({
@@ -39,20 +37,6 @@ export default function Home() {
     },
   });
 
-  const handleMeasuredFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      setMeasuredDataCsv(text);
-      toast.success(`Loaded measured data file: ${file.name}`);
-    } catch (err: any) {
-      toast.error(`Failed to read file: ${err?.message ?? "Unknown error"}`);
-    }
-  };
-
   const handleSubmit = useCallback(async () => {
     const names = parseCompoundNames(input);
 
@@ -69,6 +53,7 @@ export default function Home() {
     setProgress({ completed: 0, total: names.length, current: names[0] });
 
     try {
+      // Step 1: Fetch compound data from PubChem (browser-side, CORS-enabled)
       const compoundData = await fetchCompoundsFromPubChem(
         names,
         (completed, total, current) => {
@@ -76,19 +61,20 @@ export default function Home() {
         }
       );
 
+      // Step 2: Send fetched data to backend for BBB + major CYP450 screening
       setProgress({
         completed: names.length,
         total: names.length,
         current: "Running screening models...",
       });
-      screenWithDataMutation.mutate({ compounds: compoundData, measuredDataCsv });
+      screenWithDataMutation.mutate({ compounds: compoundData });
     } catch (err: any) {
       toast.error(
         "Failed to fetch compound data: " + (err?.message ?? "Unknown error")
       );
       setIsScreening(false);
     }
-  }, [input, measuredDataCsv, screenWithDataMutation]);
+  }, [input, screenWithDataMutation]);
 
   const isPending = isScreening || screenWithDataMutation.isPending;
 
@@ -105,26 +91,15 @@ export default function Home() {
     "Caffeine",
   ];
 
-  const measuredDataExample = [
-    "compound,isoform,value,unit,relation,note",
-    "Caffeine,CYP1A2,8.2,uM,=,Literature IC50",
-    "Donepezil,CYP2D6,0.45,uM,=,Literature Ki",
-    "Diazepam,CYP3A4,12.4,uM,=,Literature IC50",
-    "Tacrolimus,CYP3A5,4.8,uM,=,Literature IC50",
-  ].join("\n");
-
   const loadExample = () => {
     setInput(exampleCompounds.join("\n"));
-  };
-
-  const loadMeasuredExample = () => {
-    setMeasuredDataCsv(measuredDataExample);
   };
 
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
 
+      {/* Hero Section */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 rounded-full blur-3xl" />
@@ -145,14 +120,15 @@ export default function Home() {
             <p className="text-muted-foreground text-lg leading-relaxed max-w-2xl mx-auto">
               Evaluate compound candidates for blood-brain barrier penetration
               potential and inhibition across major CYP450 family enzymes
-              (CYP1A2, 2C9, 2C19, 2D6, 2E1, 3A4, 3A5) using integrated
-              computational models and measured-value-first interpretation when
-              IC50/Ki data are provided.
+              (CYP1A2, 2C9, 2C19, 2D6, 2E1, 3A4) using integrated
+              computational models from SwissADME, ADMETlab 3.0, and
+              pharmacophore-based scoring.
             </p>
           </div>
         </div>
       </section>
 
+      {/* Feature Cards */}
       <section className="container pb-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
           <FeatureCard
@@ -163,16 +139,17 @@ export default function Home() {
           <FeatureCard
             icon={<ShieldCheck className="w-5 h-5" />}
             title="Major CYP450 Panel"
-            description="Screen CYP1A2, 2C9, 2C19, 2D6, 2E1, 3A4, and 3A5 inhibition potential together"
+            description="Screen CYP1A2, 2C9, 2C19, 2D6, 2E1, and 3A4 inhibition potential together"
           />
           <FeatureCard
             icon={<FlaskConical className="w-5 h-5" />}
-            title="Measured Data Priority"
-            description="Optional CSV import lets CYP1A2, CYP2D6, CYP3A4, and CYP3A5 show measured IC50/Ki before prediction"
+            title="PubChem Integration"
+            description="Auto-fetch SMILES, MW, LogP, TPSA, HBD, HBA from PubChem database"
           />
         </div>
       </section>
 
+      {/* Input Section */}
       <section className="container pb-20 flex-1">
         <Card className="max-w-4xl mx-auto card-glow bg-card border-border">
           <CardContent className="p-6 sm:p-8">
@@ -211,53 +188,6 @@ export default function Home() {
                     : ""}
                 </div>
               )}
-            </div>
-
-            <div className="mt-6 border-t border-border pt-6 space-y-4">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Optional measured CYP data import
-                  </h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    CSV/TSV columns: <code>compound, isoform, value</code>.
-                    Optional columns: <code>unit, relation, note</code>.
-                    Supported measured-priority isoforms: CYP1A2, CYP2D6,
-                    CYP3A4, CYP3A5.
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <label className="inline-flex">
-                    <input
-                      type="file"
-                      accept=".csv,.tsv,.txt"
-                      className="hidden"
-                      onChange={handleMeasuredFileUpload}
-                      disabled={isPending}
-                    />
-                    <span className="inline-flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-background text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
-                      <Upload className="w-4 h-4" />
-                      Upload CSV
-                    </span>
-                  </label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={loadMeasuredExample}
-                    disabled={isPending}
-                  >
-                    Load measured example
-                  </Button>
-                </div>
-              </div>
-
-              <textarea
-                value={measuredDataCsv}
-                onChange={e => setMeasuredDataCsv(e.target.value)}
-                placeholder={measuredDataExample}
-                className="w-full h-40 p-4 rounded-lg bg-input/50 border border-border text-foreground placeholder:text-muted-foreground/50 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-primary/50 transition-all"
-                disabled={isPending}
-              />
             </div>
 
             {isPending && (
@@ -318,22 +248,43 @@ export default function Home() {
         </Card>
       </section>
 
+      {/* Footer */}
       <footer className="border-t border-border/50 py-6">
         <div className="container text-center text-xs text-muted-foreground">
-          Powered by PubChem API, SwissADME BOILED-Egg Model, ADMETlab 3.0
-          Rules, and measured IC50/Ki data import
+          Powered by PubChem API, SwissADME BOILED-Egg Model &amp; ADMETlab 3.0
+          Rules
         </div>
       </footer>
     </div>
   );
 }
 
-function parseCompoundNames(input: string): string[] {
-  const names = input
-    .split(/[\n,;]/)
-    .map(s => s.trim())
-    .filter(Boolean);
-  return Array.from(new Set(names));
+function parseCompoundNames(raw: string): string[] {
+  const lines = raw.split("\n");
+  const names: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // CSV/TSV compatible: take first column if delimiters are present
+    const firstCell = trimmed.split(/\t|,|;/)[0]?.trim() ?? "";
+    const cleaned = firstCell.replace(/^"|"$/g, "").trim();
+    if (!cleaned) continue;
+
+    // Skip common headers
+    if (
+      ["name", "compound", "compound_name", "compound name"].includes(
+        cleaned.toLowerCase()
+      )
+    ) {
+      continue;
+    }
+
+    names.push(cleaned);
+  }
+
+  return names;
 }
 
 function FeatureCard({
@@ -346,14 +297,16 @@ function FeatureCard({
   description: string;
 }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm p-5 card-glow">
-      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary mb-3">
-        {icon}
-      </div>
-      <h3 className="font-semibold text-foreground mb-1.5">{title}</h3>
-      <p className="text-sm text-muted-foreground leading-relaxed">
-        {description}
-      </p>
-    </div>
+    <Card className="bg-card/50 border-border/50 hover:border-border transition-colors">
+      <CardContent className="p-5">
+        <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary mb-3">
+          {icon}
+        </div>
+        <h3 className="text-sm font-semibold text-foreground mb-1">{title}</h3>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {description}
+        </p>
+      </CardContent>
+    </Card>
   );
 }

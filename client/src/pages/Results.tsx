@@ -46,12 +46,11 @@ type SortField =
   | "cyp2c19Potential"
   | "cyp2d6Potential"
   | "cyp3a4Potential"
-  | "cyp3a5Potential"
   | "admetlabRules"
   | "boiledEgg";
 
 type SortDirection = "asc" | "desc";
-type IsoformKey = "cyp1a2" | "cyp2c9" | "cyp2c19" | "cyp2d6" | "cyp3a4" | "cyp3a5";
+type IsoformKey = "cyp1a2" | "cyp2c9" | "cyp2c19" | "cyp2d6" | "cyp3a4";
 
 const potentialOrder = { "Very High": 4, High: 3, Moderate: 2, Low: 1 };
 const ISOFORM_COLUMNS: Array<{
@@ -61,8 +60,7 @@ const ISOFORM_COLUMNS: Array<{
     | "cyp2c9Potential"
     | "cyp2c19Potential"
     | "cyp2d6Potential"
-    | "cyp3a4Potential"
-    | "cyp3a5Potential";
+    | "cyp3a4Potential";
   label: string;
 }> = [
   { key: "cyp1a2", field: "cyp1a2Potential", label: "CYP1A2" },
@@ -70,19 +68,11 @@ const ISOFORM_COLUMNS: Array<{
   { key: "cyp2c19", field: "cyp2c19Potential", label: "CYP2C19" },
   { key: "cyp2d6", field: "cyp2d6Potential", label: "CYP2D6" },
   { key: "cyp3a4", field: "cyp3a4Potential", label: "CYP3A4" },
-  { key: "cyp3a5", field: "cyp3a5Potential", label: "CYP3A5" },
 ];
 const getPotentialRank = (value?: string) =>
   value && value in potentialOrder
     ? potentialOrder[value as keyof typeof potentialOrder]
     : -Infinity;
-
-const STATUS_LABELS: Record<string, string> = {
-  not_found: "not_found",
-  name_unresolved: "name_unresolved",
-  not_single_compound: "not_single_compound",
-  error: "error",
-};
 
 export default function Results() {
   const [results, setResults] = useState<ScreeningResult[]>([]);
@@ -196,10 +186,6 @@ export default function Results() {
         case "cyp3a4Potential":
           valA = getPotentialRank(getIsoform(a, "cyp3a4")?.potential);
           valB = getPotentialRank(getIsoform(b, "cyp3a4")?.potential);
-          break;
-        case "cyp3a5Potential":
-          valA = getPotentialRank(getIsoform(a, "cyp3a5")?.potential);
-          valB = getPotentialRank(getIsoform(b, "cyp3a5")?.potential);
           break;
         case "admetlabRules":
           valA = a.bbb.admetlabRulesPassed;
@@ -559,11 +545,8 @@ export default function Results() {
                         <TableCell className="font-medium text-foreground whitespace-nowrap">
                           {r.compound.name}
                           {isFailed && (
-                            <span
-                              className="ml-2 text-xs text-destructive"
-                              title={r.compound.errorMessage ?? undefined}
-                            >
-                              ({STATUS_LABELS[r.compound.status] ?? r.compound.status})
+                            <span className="ml-2 text-xs text-destructive">
+                              ({r.compound.status})
                             </span>
                           )}
                         </TableCell>

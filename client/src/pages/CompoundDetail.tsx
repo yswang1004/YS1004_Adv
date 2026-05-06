@@ -26,7 +26,6 @@ const PANEL_ISOFORMS = [
   { key: "cyp2d6", label: "CYP2D6" },
   { key: "cyp2e1", label: "CYP2E1" },
   { key: "cyp3a4", label: "CYP3A4" },
-  { key: "cyp3a5", label: "CYP3A5" },
 ] as const;
 
 type IsoformEntry = ScreeningResult["cyp450"][typeof PANEL_ISOFORMS[number]["key"]];
@@ -744,7 +743,7 @@ export default function CompoundDetail() {
                       </span>
                     </div>
                     <p className="text-[11px] text-muted-foreground/70 mt-1 leading-relaxed">
-                      Primary screening focus across CYP1A2, CYP2C9, CYP2C19, CYP2D6, CYP2E1, CYP3A4, and CYP3A5.
+                      Primary screening focus across CYP1A2, CYP2C9, CYP2C19, CYP2D6, CYP2E1, and CYP3A4.
                       Top signal: {cypPanel.topIsoforms.join(", ") || "—"}
                     </p>
                   </div>
@@ -756,7 +755,7 @@ export default function CompoundDetail() {
                     />
                   ))}
                   <p className="text-[11px] text-muted-foreground/70 pt-2 border-t border-border/50 leading-relaxed">
-                    若未提供實測 inhibition 數值，目前以結構與理化特徵進行預測；若有匯入實測 IC50/Ki，CYP1A2 / CYP2D6 / CYP3A4 / CYP3A5 會優先顯示實測來源與數值。
+                    若未提供實測 inhibition 數值，目前以結構與理化特徵進行預測；一旦後端補入實測 IC50/Ki，這裡可直接改為顯示實測來源與數值。
                   </p>
                 </div>
               ) : (
@@ -865,7 +864,6 @@ function IsoformRow({
       </div>
       <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
         {entry.summary}
-        {entry.measuredNote ? ` (${entry.measuredNote})` : ""}
       </p>
     </div>
   );

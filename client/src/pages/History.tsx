@@ -31,28 +31,7 @@ export default function History() {
     // Reconstruct ScreeningResult[] from DB rows
     const results: ScreeningResult[] = sessionResults.map(row => {
       if (row.resultJson) {
-        const stored = row.resultJson as unknown as ScreeningResult;
-        if (stored.cyp450?.cyp3a5) {
-          return stored;
-        }
-        return {
-          ...stored,
-          cyp450: {
-            ...stored.cyp450,
-            cyp3a5: {
-              isoform: "CYP3A5",
-              score: 0,
-              potential: "Low",
-              features: [],
-              summary: "Historical session did not store CYP3A5 panel data.",
-              source: "predicted",
-              measuredValue: null,
-              measuredUnit: null,
-              measuredRelation: null,
-              measuredNote: null,
-            },
-          },
-        };
+        return row.resultJson as unknown as ScreeningResult;
       }
       // Fallback reconstruction from flat fields
       return {
@@ -150,19 +129,7 @@ export default function History() {
             summary: "Historical session did not store CYP3A4 panel data.",
             source: "predicted",
           },
-          cyp3a5: {
-            isoform: "CYP3A5",
-            score: 0,
-            potential: "Low",
-            features: [],
-            summary: "Historical session did not store CYP3A5 panel data.",
-            source: "predicted",
-            measuredValue: null,
-            measuredUnit: null,
-            measuredRelation: null,
-            measuredNote: null,
-          },
-          majorFamilyScore: Number(((row.cypScore ?? 0) / 7).toFixed(2)),
+          majorFamilyScore: Number(((row.cypScore ?? 0) / 6).toFixed(2)),
           overallPotential: (row.cypPotential ?? "Low") as any,
           topIsoforms: ["CYP2E1"],
         },
