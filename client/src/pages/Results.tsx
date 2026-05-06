@@ -77,6 +77,13 @@ const getPotentialRank = (value?: string) =>
     ? potentialOrder[value as keyof typeof potentialOrder]
     : -Infinity;
 
+const STATUS_LABELS: Record<string, string> = {
+  not_found: "not_found",
+  name_unresolved: "name_unresolved",
+  not_single_compound: "not_single_compound",
+  error: "error",
+};
+
 export default function Results() {
   const [results, setResults] = useState<ScreeningResult[]>([]);
   const [sortField, setSortField] = useState<SortField>("majorCypScore");
@@ -552,8 +559,11 @@ export default function Results() {
                         <TableCell className="font-medium text-foreground whitespace-nowrap">
                           {r.compound.name}
                           {isFailed && (
-                            <span className="ml-2 text-xs text-destructive">
-                              ({r.compound.status})
+                            <span
+                              className="ml-2 text-xs text-destructive"
+                              title={r.compound.errorMessage ?? undefined}
+                            >
+                              ({STATUS_LABELS[r.compound.status] ?? r.compound.status})
                             </span>
                           )}
                         </TableCell>

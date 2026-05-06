@@ -14,19 +14,46 @@ export interface PubChemCompoundData {
   tpsa: number | null;
   hbd: number | null;
   hba: number | null;
-  status: "success" | "not_found" | "error";
+  status:
+    | "success"
+    | "not_found"
+    | "name_unresolved"
+    | "not_single_compound"
+    | "error";
   errorMessage?: string;
 }
 
 const PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug";
 
-// Cache strategy:
-// - Cache successes longer (default 7 days)
-// - Cache not_found shorter (default 1 day)
-// - Do not cache transient errors
-const CACHE_PREFIX = "pubchem:compound:v1:";
+const CACHE_PREFIX = "pubchem:compound:v2:";
 const CACHE_TTL_SUCCESS_MS = 7 * 24 * 60 * 60 * 1000;
 const CACHE_TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
+
+const NAME_NORMALIZATION_MAP: Record<string, string> = {
+  "β-myrcene": "beta-Myrcene",
+  "α-myrcene": "alpha-Myrcene",
+  "butylated hydroxyl anisole": "Butylated hydroxyanisole",
+  neohesperidine: "Neohesperidin",
+  chlormethiazole: "Clomethiazole",
+};
+
+const NON_SINGLE_COMPOUND_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  {
+    pattern: /^brij\s*\d+/i,
+    reason:
+      "Brij series are commercial surfactant mixtures rather than single well-defined small molecules.",
+  },
+  {
+    pattern: /^tween\s*\d+/i,
+    reason:
+      "Tween series are polysorbate surfactant mixtures rather than single discrete compounds.",
+  },
+  {
+    pattern: /microcrystalline\s+cellulose/i,
+    reason:
+      "Microcrystalline cellulose is an excipient/material, not a single small molecule suitable for one-CID screening.",
+  },
+];
 
 type CacheEntry = {
   savedAt: number;
@@ -63,7 +90,9 @@ function writeCache(name: string, data: PubChemCompoundData) {
     const ttlMs =
       data.status === "success"
         ? CACHE_TTL_SUCCESS_MS
-        : data.status === "not_found"
+        : data.status === "not_found" ||
+            data.status === "name_unresolved" ||
+            data.status === "not_single_compound"
           ? CACHE_TTL_NOT_FOUND_MS
           : 0;
 
@@ -110,8 +139,6 @@ async function fetchWithRetry(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const resp = await fetchWithTimeout(url, timeoutMs);
-
-      // Treat rate limit / transient upstream errors as retryable.
       if (resp.status === 429 || resp.status === 503 || resp.status === 502) {
         if (attempt < retries) {
           const delay = baseDelayMs * Math.pow(2, attempt);
@@ -119,7 +146,6 @@ async function fetchWithRetry(
           continue;
         }
       }
-
       return resp;
     } catch (e) {
       lastErr = e;
@@ -131,6 +157,118 @@ async function fetchWithRetry(
     }
   }
   throw lastErr ?? new Error("PubChem request failed");
+}
+
+function normalizeCandidateNames(name: string): string[] {
+  const trimmed = name.trim();
+  const variants = new Set<string>([trimmed]);
+  const lower = trimmed.toLowerCase();
+
+  if (NAME_NORMALIZATION_MAP[lower]) {
+    variants.add(NAME_NORMALIZATION_MAP[lower]);
+  }
+
+  variants.add(
+    trimmed
+      .replace(/[βΒ]/g, "beta")
+      .replace(/[αΑ]/g, "alpha")
+      .replace(/\s+/g, " ")
+  );
+  variants.add(trimmed.replace(/[βΒ]/g, "b").replace(/[αΑ]/g, "a"));
+  variants.add(trimmed.replace(/-/g, " "));
+
+  return Array.from(variants)
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function classifyNonSingleCompound(name: string): string | null {
+  for (const entry of NON_SINGLE_COMPOUND_PATTERNS) {
+    if (entry.pattern.test(name)) return entry.reason;
+  }
+  return null;
+}
+
+async function lookupPubChemByName(
+  originalName: string,
+  queryName: string
+): Promise<PubChemCompoundData> {
+  const cidUrl = `${PUBCHEM_BASE}/compound/name/${encodeURIComponent(queryName)}/cids/JSON`;
+  const cidRes = await fetchWithRetry(cidUrl);
+  if (!cidRes.ok) {
+    return {
+      name: originalName,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: cidRes.status === 404 ? "not_found" : "error",
+      errorMessage: `PubChem lookup failed for \"${queryName}\" (HTTP ${cidRes.status})`,
+    };
+  }
+
+  const cidData = await cidRes.json();
+  const cid = cidData?.IdentifierList?.CID?.[0];
+  if (!cid) {
+    return {
+      name: originalName,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "not_found",
+      errorMessage: `No CID found in PubChem for \"${queryName}\"`,
+    };
+  }
+
+  const propUrl = `${PUBCHEM_BASE}/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
+  const propRes = await fetchWithRetry(propUrl);
+  if (!propRes.ok) {
+    return {
+      name: originalName,
+      cid,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "error",
+      errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
+    };
+  }
+
+  const propData = await propRes.json();
+  const props = propData?.PropertyTable?.Properties?.[0] ?? {};
+  return {
+    name: originalName,
+    cid,
+    smiles:
+      props.IsomericSMILES ??
+      props.CanonicalSMILES ??
+      props.SMILES ??
+      props.ConnectivitySMILES ??
+      null,
+    mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
+    logP: props.XLogP != null ? Number(props.XLogP) : null,
+    tpsa: props.TPSA != null ? Number(props.TPSA) : null,
+    hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
+    hba:
+      props.HBondAcceptorCount != null
+        ? Number(props.HBondAcceptorCount)
+        : null,
+    status: "success",
+    errorMessage:
+      queryName !== originalName
+        ? `Resolved via normalized name: ${queryName}`
+        : undefined,
+  };
 }
 
 export async function fetchCompoundFromPubChem(
@@ -152,94 +290,62 @@ export async function fetchCompoundFromPubChem(
     };
   }
 
-  // 1) Cache hit
+  const nonSingleReason = classifyNonSingleCompound(trimmed);
+  if (nonSingleReason) {
+    const result: PubChemCompoundData = {
+      name: trimmed,
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "not_single_compound",
+      errorMessage: nonSingleReason,
+    };
+    writeCache(trimmed, result);
+    return result;
+  }
+
   const cached = readCache(trimmed);
   if (cached) return cached;
 
   try {
-    // Step 1: Get CID
-    const cidUrl = `${PUBCHEM_BASE}/compound/name/${encodeURIComponent(trimmed)}/cids/JSON`;
-    const cidRes = await fetchWithRetry(cidUrl);
-    if (!cidRes.ok) {
-      const result: PubChemCompoundData = {
-        name: trimmed,
-        cid: null,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        // PubChem returns 404 for unknown names sometimes; treat as not_found.
-        status: cidRes.status === 404 ? "not_found" : "error",
-        errorMessage: `PubChem lookup failed (HTTP ${cidRes.status})`,
-      };
-      writeCache(trimmed, result);
-      return result;
-    }
-    const cidData = await cidRes.json();
-    const cid = cidData?.IdentifierList?.CID?.[0];
-    if (!cid) {
-      const result: PubChemCompoundData = {
-        name: trimmed,
-        cid: null,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        status: "not_found",
-        errorMessage: "No CID found in PubChem",
-      };
-      writeCache(trimmed, result);
-      return result;
+    const candidates = normalizeCandidateNames(trimmed);
+    let sawNotFound = false;
+
+    for (const candidate of candidates) {
+      const result = await lookupPubChemByName(trimmed, candidate);
+      if (result.status === "success") {
+        writeCache(trimmed, result);
+        return result;
+      }
+      if (result.status === "not_found") {
+        sawNotFound = true;
+        continue;
+      }
+      if (result.status === "error") {
+        return result;
+      }
     }
 
-    // Step 2: Get properties
-    const propUrl = `${PUBCHEM_BASE}/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
-    const propRes = await fetchWithRetry(propUrl);
-    if (!propRes.ok) {
-      const result: PubChemCompoundData = {
-        name: trimmed,
-        cid,
-        smiles: null,
-        mw: null,
-        logP: null,
-        tpsa: null,
-        hbd: null,
-        hba: null,
-        status: "error",
-        errorMessage: `Property fetch failed (HTTP ${propRes.status})`,
-      };
-      // don't cache transient errors
-      return result;
-    }
-    const propData = await propRes.json();
-    const props = propData?.PropertyTable?.Properties?.[0] ?? {};
-
-    const result: PubChemCompoundData = {
+    const unresolved: PubChemCompoundData = {
       name: trimmed,
-      cid,
-      smiles:
-        props.IsomericSMILES ??
-        props.CanonicalSMILES ??
-        props.SMILES ??
-        props.ConnectivitySMILES ??
-        null,
-      mw: props.MolecularWeight != null ? Number(props.MolecularWeight) : null,
-      logP: props.XLogP != null ? Number(props.XLogP) : null,
-      tpsa: props.TPSA != null ? Number(props.TPSA) : null,
-      hbd: props.HBondDonorCount != null ? Number(props.HBondDonorCount) : null,
-      hba:
-        props.HBondAcceptorCount != null
-          ? Number(props.HBondAcceptorCount)
-          : null,
-      status: "success",
+      cid: null,
+      smiles: null,
+      mw: null,
+      logP: null,
+      tpsa: null,
+      hbd: null,
+      hba: null,
+      status: "name_unresolved",
+      errorMessage: sawNotFound
+        ? "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name."
+        : "Unable to resolve compound name.",
     };
-
-    writeCache(trimmed, result);
-    return result;
+    writeCache(trimmed, unresolved);
+    return unresolved;
   } catch (err: any) {
     return {
       name: trimmed,
@@ -256,29 +362,33 @@ export async function fetchCompoundFromPubChem(
   }
 }
 
-/**
- * Fetch multiple compounds with basic rate limiting.
- * Calls onProgress callback for each completed compound.
- */
 export async function fetchCompoundsFromPubChem(
   names: string[],
-  onProgress?: (completed: number, total: number, current: string) => void
+  onProgress?: (completed: number, total: number, current: string) => void,
+  opts?: { concurrency?: number }
 ): Promise<PubChemCompoundData[]> {
-  const results: PubChemCompoundData[] = [];
+  const total = names.length;
+  const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 6, 12));
 
-  for (let i = 0; i < names.length; i++) {
-    const name = names[i];
+  if (total === 0) return [];
 
-    onProgress?.(i, names.length, name);
-    const result = await fetchCompoundFromPubChem(name);
-    results.push(result);
+  const results: PubChemCompoundData[] = new Array(total);
+  let nextIndex = 0;
+  let completed = 0;
 
-    // Rate limit: 200ms between requests to respect PubChem limits
-    if (i < names.length - 1) {
-      await sleep(200);
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= total) return;
+      const current = names[index];
+      onProgress?.(completed, total, current);
+      const data = await fetchCompoundFromPubChem(current);
+      results[index] = data;
+      completed += 1;
+      onProgress?.(completed, total, current);
     }
-  }
+  };
 
-  onProgress?.(names.length, names.length, "");
+  await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
   return results;
 }
