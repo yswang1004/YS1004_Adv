@@ -66,16 +66,19 @@ const NON_SINGLE_COMPOUND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
 
 function normalizeCandidateNames(name: string): string[] {
   const trimmed = name.trim();
-  const variants = new Set<string>([trimmed]);
+  const variants = new Set<string>();
   const lower = trimmed.toLowerCase();
   if (NAME_NORMALIZATION_MAP[lower]) variants.add(NAME_NORMALIZATION_MAP[lower]);
-  variants.add(
-    trimmed
-      .replace(/[βΒ]/g, "beta")
-      .replace(/[αΑ]/g, "alpha")
-      .replace(/\s+/g, " ")
-  );
-  variants.add(trimmed.replace(/-/g, " "));
+
+  const greekNormalized = trimmed
+    .replace(/[βΒ]/g, "beta")
+    .replace(/[αΑ]/g, "alpha")
+    .replace(/\s+/g, " ");
+  if (greekNormalized !== trimmed) variants.add(greekNormalized);
+
+  const dehyphenated = trimmed.replace(/-/g, " ");
+  if (dehyphenated !== trimmed) variants.add(dehyphenated);
+
   return Array.from(variants).map(v => v.trim()).filter(Boolean);
 }
 
@@ -91,7 +94,7 @@ async function lookupPubChemByName(
   queryName: string
 ): Promise<CompoundProperties> {
   const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(queryName)}/cids/JSON`;
-  const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(15000) });
+  const cidRes = await fetch(cidUrl, { signal: AbortSignal.timeout(20000) });
   if (!cidRes.ok) {
     return {
       name: originalName,
@@ -126,7 +129,7 @@ async function lookupPubChemByName(
 
   const propUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/IsomericSMILES,CanonicalSMILES,MolecularWeight,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount/JSON`;
   const propRes = await fetch(propUrl, {
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(20000),
   });
   if (!propRes.ok) {
     return {
@@ -206,16 +209,15 @@ export async function fetchCompoundFromPubChem(
   }
 
   try {
+    const primaryResult = await lookupPubChemByName(trimmed, trimmed);
+    if (primaryResult.status === "success") return primaryResult;
+    if (primaryResult.status === "error") return primaryResult;
+
     const candidates = normalizeCandidateNames(trimmed);
-    let sawNotFound = false;
     for (const candidate of candidates) {
       const result = await lookupPubChemByName(trimmed, candidate);
       if (result.status === "success") return result;
-      if (result.status === "not_found") {
-        sawNotFound = true;
-        continue;
-      }
-      return result;
+      if (result.status === "error") return result;
     }
 
     return {
@@ -228,9 +230,8 @@ export async function fetchCompoundFromPubChem(
       hbd: null,
       hba: null,
       status: "name_unresolved",
-      errorMessage: sawNotFound
-        ? "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name."
-        : "Unable to resolve compound name.",
+      errorMessage:
+        "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name.",
     };
   } catch (err: any) {
     return {
