@@ -25,7 +25,7 @@ export interface PubChemCompoundData {
 
 const PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug";
 
-const CACHE_PREFIX = "pubchem:compound:v2:";
+const CACHE_PREFIX = "pubchem:compound:v3:";
 const CACHE_TTL_SUCCESS_MS = 7 * 24 * 60 * 60 * 1000;
 const CACHE_TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
 
@@ -131,9 +131,9 @@ async function fetchWithRetry(
     baseDelayMs?: number;
   }
 ): Promise<Response> {
-  const timeoutMs = opts?.timeoutMs ?? 15000;
-  const retries = opts?.retries ?? 2;
-  const baseDelayMs = opts?.baseDelayMs ?? 400;
+  const timeoutMs = opts?.timeoutMs ?? 20000;
+  const retries = opts?.retries ?? 4;
+  const baseDelayMs = opts?.baseDelayMs ?? 800;
 
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -161,21 +161,21 @@ async function fetchWithRetry(
 
 function normalizeCandidateNames(name: string): string[] {
   const trimmed = name.trim();
-  const variants = new Set<string>([trimmed]);
+  const variants = new Set<string>();
   const lower = trimmed.toLowerCase();
 
   if (NAME_NORMALIZATION_MAP[lower]) {
     variants.add(NAME_NORMALIZATION_MAP[lower]);
   }
 
-  variants.add(
-    trimmed
-      .replace(/[βΒ]/g, "beta")
-      .replace(/[αΑ]/g, "alpha")
-      .replace(/\s+/g, " ")
-  );
-  variants.add(trimmed.replace(/[βΒ]/g, "b").replace(/[αΑ]/g, "a"));
-  variants.add(trimmed.replace(/-/g, " "));
+  const greekNormalized = trimmed
+    .replace(/[βΒ]/g, "beta")
+    .replace(/[αΑ]/g, "alpha")
+    .replace(/\s+/g, " ");
+  if (greekNormalized !== trimmed) variants.add(greekNormalized);
+
+  const dehyphenated = trimmed.replace(/-/g, " ");
+  if (dehyphenated !== trimmed) variants.add(dehyphenated);
 
   return Array.from(variants)
     .map(v => v.trim())
@@ -312,18 +312,21 @@ export async function fetchCompoundFromPubChem(
   if (cached) return cached;
 
   try {
-    const candidates = normalizeCandidateNames(trimmed);
-    let sawNotFound = false;
+    const primaryResult = await lookupPubChemByName(trimmed, trimmed);
+    if (primaryResult.status === "success") {
+      writeCache(trimmed, primaryResult);
+      return primaryResult;
+    }
+    if (primaryResult.status === "error") {
+      return primaryResult;
+    }
 
+    const candidates = normalizeCandidateNames(trimmed);
     for (const candidate of candidates) {
       const result = await lookupPubChemByName(trimmed, candidate);
       if (result.status === "success") {
         writeCache(trimmed, result);
         return result;
-      }
-      if (result.status === "not_found") {
-        sawNotFound = true;
-        continue;
       }
       if (result.status === "error") {
         return result;
@@ -340,9 +343,8 @@ export async function fetchCompoundFromPubChem(
       hbd: null,
       hba: null,
       status: "name_unresolved",
-      errorMessage: sawNotFound
-        ? "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name."
-        : "Unable to resolve compound name.",
+      errorMessage:
+        "PubChem could not resolve this name. Try a standardized compound name, synonym, or CAS-linked small-molecule name.",
     };
     writeCache(trimmed, unresolved);
     return unresolved;
@@ -368,7 +370,7 @@ export async function fetchCompoundsFromPubChem(
   opts?: { concurrency?: number }
 ): Promise<PubChemCompoundData[]> {
   const total = names.length;
-  const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 6, 12));
+  const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 2, 4));
 
   if (total === 0) return [];
 
